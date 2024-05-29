@@ -16,7 +16,7 @@ off_time = sio.loadmat('c57LightOffTime.mat')['c57LightOffTime']
 spikes_all = sio.loadmat('c57SpikeTimesAll.mat')['c57SpikeTimesAll']
 spikes_quiet = sio.loadmat('c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
 
-ts_dict = {key: spikes_all[key, 0].flatten() for key in range(spikes_all.shape[0])}
+ts_dict = {key: nap.Ts(spikes_all[key, 0].flatten()) for key in range(spikes_all.shape[0])}
 
 spike_times = nap.TsGroup(ts_dict)
 
