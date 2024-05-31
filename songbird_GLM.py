@@ -52,7 +52,8 @@ hist_window_sec = np.arange(0.1, 3, 0.1)
 hist_window_size = [int(hist_window_sec[i] * count.rate) for i in range(len(hist_window_sec))]
 basis_fun = np.arange(2,11)
 
-pipe = Pipeline([('basis', nmo.basis.RaisedCosineBasisLog(2,mode="conv",window_size=10)), ('glm', nmo.glm.PopulationGLM())])
+pipe = Pipeline([('basis', nmo.basis.RaisedCosineBasisLog(2,mode="conv",window_size=10)),
+                 ('glm', nmo.glm.PopulationGLM(regularizer_strength=0.1, solver_name="LBFGS"))])
 
 param_grid  = {
     "basis__n_basis_funcs":basis_fun,
