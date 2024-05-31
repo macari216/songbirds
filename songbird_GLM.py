@@ -53,7 +53,11 @@ hist_window_size = [int(hist_window_sec[i] * count.rate) for i in range(len(hist
 basis_fun = np.arange(2,11)
 
 pipe = Pipeline([('basis', nmo.basis.RaisedCosineBasisLog(2,mode="conv",window_size=10)),
-                 ('glm', nmo.glm.PopulationGLM(regularizer_strength=0.1, solver_name="LBFGS"))])
+                 ('glm', nmo.glm.PopulationGLM(regularizer=nmo.regularizer.Ridge(regularizer_strength=0.1, solver_name="LBFGS")))])
+
+pipe.fit(count)
+
+quit()
 
 param_grid  = {
     "basis__n_basis_funcs":basis_fun,
@@ -64,8 +68,6 @@ clf = GridSearchCV(pipe, param_grid)
 clf.fit(count)
 
 print(clf.best_params_)
-
-quit()
 
 #choose spike history window
 hist_window_sec = 0.9
