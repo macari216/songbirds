@@ -10,11 +10,11 @@ from sklearn.utils import gen_batches
 
 matplotlib.use("TkAgg")
 
-song_times = sio.loadmat('/Users/macari216/Desktop/songbirds/songbirds/c57SongTimes.mat')['c57SongTimes']
-audio_segm = sio.loadmat('/Users/macari216/Desktop/songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
-off_time = sio.loadmat('/Users/macari216/Desktop/songbirds/songbirds/c57LightOffTime.mat')['c57LightOffTime']
-spikes_all = sio.loadmat('/Users/macari216/Desktop/songbirds/songbirds/c57SpikeTimesAll.mat')['c57SpikeTimesAll']
-spikes_quiet = sio.loadmat('/Users/macari216/Desktop/songbirds/songbirds/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
+song_times = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57SongTimes.mat')['c57SongTimes']
+audio_segm = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
+off_time = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57LightOffTime.mat')['c57LightOffTime']
+spikes_all = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57SpikeTimesAll.mat')['c57SpikeTimesAll']
+spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
 
 #convert times to Interval Sets and spikes to TsGroups
 song_times = nap.IntervalSet(start=song_times[:,0], end=song_times[:,1])
@@ -27,16 +27,13 @@ ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(sp
 spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 
 # add neuron subset marker
-spike_times["neuron_subset"] = [0] * 95 + [1] * 100
-
-# # create batches
-# batches = gen_batches(spike_times.time_support, 10)
+spike_times["neuron_subset"] = [0] * 10 + [1] * 185
 
 # count a subpopulation during the first 5 minutes
 binsize = 0.01   # in seconds
 # count = spike_times[spike_times.neuron_type == 1].count(binsize, ep=nap.IntervalSet(0,180))
 # count = spike_times.count(binsize, ep=nap.IntervalSet(0,off_time))
-count = spike_times.count(binsize, ep=nap.IntervalSet(0, 5*60))
+count = spike_times.count(binsize, ep=nap.IntervalSet(0, 15*60))[:,:3]
 count = nap.TsdFrame(t=count.t, d=count.values)
 
 #spike count series (1 neuron)
@@ -46,32 +43,37 @@ plot_series = nap.IntervalSet(start=song_times.start[3], end=song_times.start[3]
 # plt.xlabel("Time (sec)")
 # plt.ylabel("Spikes")
 
-
-# SEARCH FOR BEST BASIS PARAMS
-hist_window_sec = np.arange(0.1, 3, 0.1)
-hist_window_size = [int(hist_window_sec[i] * count.rate) for i in range(len(hist_window_sec))]
-basis_fun = np.arange(2,11)
-
-pipe = Pipeline([('basis', nmo.basis.RaisedCosineBasisLog(2,mode="conv",window_size=10)),
-                 ('glm', nmo.glm.PopulationGLM(regularizer=nmo.regularizer.Ridge(regularizer_strength=0.1, solver_name="LBFGS")))])
-
-pipe.fit(count)
-
-quit()
-
-param_grid  = {
-    "basis__n_basis_funcs":basis_fun,
-    "basis__window_size": hist_window_size,
-}
-
-clf = GridSearchCV(pipe, param_grid)
-clf.fit(count)
-
-print(clf.best_params_)
-
 #choose spike history window
 hist_window_sec = 0.9
 hist_window_size = int(hist_window_sec * count.rate)
+
+# # SEARCH FOR BEST BASIS PARAMS
+# hist_window_sec = np.arange(0.1, 3, 0.1)
+# hist_window_size = [int(hist_window_sec[i] * count.rate) for i in range(len(hist_window_sec))]
+# basis_fun = np.arange(2,11)
+
+basis = nmo.basis.RaisedCosineBasisLog(6, mode="conv", window_size=hist_window_size)
+bas = nmo.basis.TransformerBasis(basis**3)
+model = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.Ridge(regularizer_strength=0.1, solver_name="LBFGS"))
+pipe = Pipeline([("eval", bas), ("fit", model)])
+
+param_grid  = {"eval__basis":[nmo.basis.RaisedCosineBasisLog(3, mode="conv", window_size=20)**3,
+                              nmo.basis.RaisedCosineBasisLog(3, mode="conv", window_size=50)**3,
+                              nmo.basis.RaisedCosineBasisLog(3, mode="conv", window_size=90)**3,
+                              nmo.basis.RaisedCosineBasisLog(6, mode="conv", window_size=20)**3,
+                              nmo.basis.RaisedCosineBasisLog(6, mode="conv", window_size=50)**3,
+                              nmo.basis.RaisedCosineBasisLog(6, mode="conv", window_size=90)**3,
+                              nmo.basis.RaisedCosineBasisLog(9, mode="conv", window_size=20)**3,
+                              nmo.basis.RaisedCosineBasisLog(9, mode="conv", window_size=50)**3,
+                              nmo.basis.RaisedCosineBasisLog(9, mode="conv", window_size=90)**3]}
+
+cv = GridSearchCV(pipe, param_grid)
+cv.fit(count, count.squeeze())
+
+res = cv.best_params_
+print(res['eval__basis'].n_basis_funcsn)
+
+quit()
 
 # define  basis
 basis = nmo.basis.RaisedCosineBasisLog(6, mode="conv", window_size=hist_window_size)
@@ -91,13 +93,22 @@ end = X.time_support["end"]
 training = nap.IntervalSet(start, start + duration * 0.6)
 testing = nap.IntervalSet(start + duration * 0.6, end)
 
-# model
+# define model
 model = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.Ridge(regularizer_strength=0.1, solver_name="LBFGS"))
-model.fit(X.restrict(training), count.restrict(training))
+
+# create batches
+n_bat = int(X.restrict(training).shape[0] / 10)
+batches = gen_batches(X.restrict(training).shape[0], n_bat)
+
+# train
+for bat in batches:
+    X_bat = X.restrict(training)[bat]
+    count_bat = count.restrict(training)[bat].squeeze()
+    model.fit(X_bat, count_bat)
 
 # compute score
-score_train = model.score(X.restrict(training), count.restrict(training), score_type="pseudo-r2-McFadden")
-score_test = model.score(X.restrict(testing), count.restrict(testing), score_type="pseudo-r2-McFadden")
+score_train = model.score(X.restrict(training), count.restrict(training).squeeze(), score_type="pseudo-r2-McFadden")
+score_test = model.score(X.restrict(testing), count.restrict(testing).squeeze(), score_type="pseudo-r2-McFadden")
 print("Score(train data):", score_train)
 print("Score(test data):", score_test)
 

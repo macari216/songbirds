@@ -1,0 +1,55 @@
+import numpy as np
+import scipy.io as sio
+import pynapple as nap
+import nemos as nmo
+from sklearn.utils import gen_batches
+
+song_times = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57SongTimes.mat')['c57SongTimes']
+audio_segm = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
+off_time = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57LightOffTime.mat')['c57LightOffTime']
+spikes_all = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57SpikeTimesAll.mat')['c57SpikeTimesAll']
+spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
+
+song_times = nap.IntervalSet(start=song_times[:,0], end=song_times[:,1])
+audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
+
+ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
+spike_times = nap.TsGroup(ts_dict_quiet)
+
+# count a subpopulation during the first 5 minutes
+binsize = 0.01   # in seconds
+count = spike_times.count(binsize, ep=nap.IntervalSet(0, off_time))
+count = nap.TsdFrame(t=count.t, d=count.values)
+
+#choose spike history window
+hist_window_sec = 0.6
+hist_window_size = int(hist_window_sec * count.rate)
+
+basis = nmo.basis.RaisedCosineBasisLog(9, mode="conv", window_size=hist_window_size)
+time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
+
+X = basis.compute_features(count)
+
+model = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.Ridge(regularizer_strength=0.1, solver_name="LBFGS"))
+
+# train test split 60-40
+duration = X.time_support.tot_length("s")
+start = X.time_support["start"]
+end = X.time_support["end"]
+training = nap.IntervalSet(start, start + duration * 0.6)
+testing = nap.IntervalSet(start + duration * 0.6, end)
+
+# # create batches
+n_bat = int(X.restrict(training).shape[0] / 10)
+batches = gen_batches(X.restrict(training).shape[0], n_bat)
+
+for bat in batches:
+    X_bat = X.restrict(training)[bat]
+    count_bat = count.restrict(training)[bat].squeeze()
+    model.fit(X_bat, count_bat)
+
+# compute score
+score_train = model.score(X.restrict(training), count.restrict(training).squeeze(), score_type="pseudo-r2-McFadden")
+score_test = model.score(X.restrict(testing), count.restrict(testing).squeeze(), score_type="pseudo-r2-McFadden")
+print("Score(train data):", score_train)
+print("Score(test data):", score_test)
