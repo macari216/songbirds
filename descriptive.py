@@ -20,8 +20,6 @@ spike_times_all = nap.TsGroup(ts_dict_all)
 ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
 spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 
-spike_times_quiet["subset"] = [0] * 50 + [1] * 145
-
 # spike count
 binsize = 0.005   # in seconds
 

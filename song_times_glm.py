@@ -61,7 +61,6 @@ spike_pred = model.predict(X.restrict(testing))
 # mse = mse(count.restrict(testing).to_numpy(), spike_pred.to_numpy())
 
 # most active neurons
-
 song_rates = spike_times_all.restrict(song_times)['rate']
 song_thr = np.median(song_rates)
 hf_song = song_rates[song_rates > song_thr]
