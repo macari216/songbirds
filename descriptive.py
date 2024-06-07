@@ -23,6 +23,17 @@ spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 # spike count
 binsize = 0.005   # in seconds
 
+# spike count series (1 neuron)
+count = spike_times_all.count(binsize, ep=song_times)
+
+plot_series = nap.IntervalSet(start=song_times.start[3], end=song_times.start[3]+30)
+plt.figure(figsize=(7, 3.5))
+plt.step(count[:,0].restrict(song_times[0]).t, count[:,0].restrict(song_times[0]).d, where="post")
+plt.xlabel("Time (sec)")
+plt.ylabel("Spikes")
+
+
+# firing rates
 quiet_rates = spike_times_quiet['rate']
 song_rates = spike_times_all.restrict(song_times)['rate']
 
@@ -35,7 +46,6 @@ ax1.set_xlabel('Firing Rate (Hz)')
 ax2.hist(song_rates, bins=40, edgecolor='k')
 ax2.set_title('Firing Rates (song)')
 ax2.set_xlabel('Firing Rate (Hz)')
-plt.show()
 
 
 song_thr = np.median(song_rates)
@@ -50,5 +60,18 @@ match_id = np.intersect1d(hfs_id, hfq_id)
 print(song_rates.loc[match_id])
 print(quiet_rates.loc[match_id])
 
+# plot basis
+#choose spike history window
+hist_window_sec = 0.5
+hist_window_size = int(hist_window_sec * count.rate)
 
+# define  basis
+basis = nmo.basis.RaisedCosineBasisLog(6, mode="conv", window_size=hist_window_size)
+time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
+
+# plot basis
+plt.figure(figsize=(7, 3))
+plt.plot(basis(np.linspace(0, 1, 100)))
+
+plt.show()
 
