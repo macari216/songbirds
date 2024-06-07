@@ -17,12 +17,7 @@ audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
 ts_dict_all = {key: nap.Ts(spikes_all[key, 0].flatten()) for key in range(spikes_all.shape[0])}
 spike_times_all = nap.TsGroup(ts_dict_all)
 
-ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
-spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 
-spike_times_quiet["subset"] = [0] * 65 + [1] * 130
-
-# count a subpopulation during the first 5 minutes
 binsize = 0.005   # in seconds
 # count = spike_times_quiet[spike_times_quiet.subset==0].count(binsize, ep=nap.IntervalSet(0, off_time))
 count = spike_times_all.count(binsize, ep=song_times)
@@ -46,26 +41,16 @@ testing =nap.IntervalSet(song_times.start[21], song_times.end[29])
 model = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.Ridge(regularizer_strength=1., solver_name="LBFGS"))
 model.fit(X.restrict(training), count.restrict(training).squeeze())
 
-weights = model.coef_.reshape(count.shape[1], basis.n_basis_funcs, count.shape[1])
-filters = np.einsum("jki,tk->ijt", weights, basis_kernels)
-fr_params = model.intercept_
-
 score_train = model.score(X.restrict(training), count.restrict(training).squeeze(), score_type="pseudo-r2-McFadden")
 score_test = model.score(X.restrict(testing), count.restrict(testing).squeeze(), score_type="pseudo-r2-McFadden")
 print("Score(train data):", score_train)
 print("Score(test data):", score_test)
 
-# spike_pred = model.predict(X.restrict(testing)) * count.rate
-spike_pred = model.predict(X.restrict(testing))
 
-# mse = mse(count.restrict(testing).to_numpy(), spike_pred.to_numpy())
+weights = model.coef_.reshape(count.shape[1], basis.n_basis_funcs, count.shape[1])
+filters = np.einsum("jki,tk->ijt", weights, basis_kernels)
 
-# most active neurons
-song_rates = spike_times_all.restrict(song_times)['rate']
-song_thr = np.median(song_rates)
-hf_song = song_rates[song_rates > song_thr]
-hfs_id = np.array(hf_song.index)
-
+# plot history filters
 filter_plot = filters[:10,:10,:]
 
 def plot_coupling(responses, cmap_name="seismic",
@@ -116,6 +101,13 @@ def plot_coupling(responses, cmap_name="seismic",
 plot_coupling(filter_plot)
 
 
+# most active neurons
+song_rates = spike_times_all.restrict(song_times)['rate']
+song_thr = np.median(song_rates)
+hf_song = song_rates[song_rates > song_thr]
+hfs_id = np.array(hf_song.index)
+
+# plot spiking rates
 spike_pred = model.predict(X.restrict(testing)) * count.rate
 ep = nap.IntervalSet(testing.start, testing.start+30)
 
