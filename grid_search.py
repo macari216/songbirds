@@ -45,8 +45,6 @@ batch_size = 5 #sec
 
 def batcher():
 
-
-
     t = np.random.uniform(count_train.time_support[0, 0], count_train.time_support[0, 1]-batch_size)
 
     while ~(t.isin(count_train.time_support)):
