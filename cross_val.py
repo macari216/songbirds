@@ -17,27 +17,23 @@ ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(sp
 spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 
 audio_on = audio_segm[:149]
-time_on = nap.IntervalSet(0, off_time)
-time_quiet = time_on.set_diff(audio_on)
-time_quiet = time_quiet.drop_short_intervals(1,'s')
+training_end = off_time * 0.7
+time_on_train = nap.IntervalSet(0, training_end)
+time_on_test = nap.IntervalSet(training_end, off_time)
+time_quiet_train = time_on_train.set_diff(audio_on)
+time_quiet_train = time_quiet_train.drop_short_intervals(1,'s')
+time_quiet_test = time_on_test.set_diff(audio_on)
+time_quiet_test = time_quiet_test.drop_short_intervals(1,'s')
 
 binsize = 0.005   # in seconds
-count = spike_times_quiet.count(binsize, ep=time_quiet)
+count_train = spike_times_quiet.count(binsize, ep=time_quiet_train)
+count_test = spike_times_quiet.count(binsize, ep=time_quiet_test)
 
-duration = count.time_support.tot_length("s")
-start = count.time_support["start"]
-end = count.time_support["end"]
-training = nap.IntervalSet(start[0], start[0] + duration * 0.7)
-testing = nap.IntervalSet(start[0] + duration * 0.7, end[-1])
+hist_window_sec = [0.02, 0.05, 0.1, 0.9]
+hist_window_size = [int(hist_window_sec[i] * count_train.rate) for i in range(len(hist_window_sec))]
+# hist_window_size = int(hist_window_sec * count_train.rate)
 
-count_train = count.restrict(training)
-count_train = count_train.restrict(time_quiet.intersect(training))
-
-hist_window_sec = 0.05
-# hist_window_size = [int(hist_window_sec[i] * count.rate) for i in range(len(hist_window_sec))]
-hist_window_size = int(hist_window_sec * count.rate)
-
-n_bat = 100
+n_bat = 1000
 batch_size = count_train.time_support.tot_length() / n_bat
 
 def batcher(start):
@@ -49,15 +45,12 @@ def batcher(start):
 
     return X, counts, start
 
-reg = [nmo.regularizer.Ridge(solver_name="GradientDescent",solver_kwargs={"stepsize": 0.001, "acceleration": False}),
-       nmo.regularizer.UnRegularized(solver_name="GradientDescent",solver_kwargs={"stepsize": 0.001, "acceleration": False})]
+logl = np.zeros((len(hist_window_size), n_bat))
 
-logl = np.zeros((len(reg), n_bat))
+for l, ws in enumerate(hist_window_size):
+    basis = nmo.basis.RaisedCosineBasisLog(5, mode="conv", window_size=ws)
 
-for l, regul in enumerate(reg):
-    basis = nmo.basis.RaisedCosineBasisLog(3, mode="conv", window_size=hist_window_size)
-
-    glm = nmo.glm.PopulationGLM(regularizer=regul)
+    glm = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.Ridge(solver_name="GradientDescent",solver_kwargs={"stepsize": 0.1, "acceleration": False}))
 
     start = count_train.time_support.start[0]
 
@@ -73,9 +66,14 @@ for l, regul in enumerate(reg):
         # Score the model along the time axis
         logl[l, i] = glm.score(X, Y, score_type="log-likelihood")
 
+    X_test = basis.compute_features(count_test)
+    score_test = glm.score(X_test, count_test.squeeze(), score_type="log-likelihood")
+    print("Score(train data):", logl[l, -1])
+    print("Score(test data):", score_test)
+
 plt.figure()
-for i in range(len(reg)):
-    plt.plot(logl[i], label=reg[i], alpha=0.3)
+for i in range(len(hist_window_size)):
+    plt.plot(logl[i], label=hist_window_size[i], alpha=0.3)
 plt.xlabel("Iteration")
 plt.ylabel("Log-likelihood")
 plt.legend()
