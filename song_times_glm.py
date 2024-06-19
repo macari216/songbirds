@@ -5,26 +5,23 @@ import nemos as nmo
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error as mse
 
-audio_segm = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
-song_times = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57SongTimes.mat')['c57SongTimes']
-off_time = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57LightOffTime.mat')['c57LightOffTime']
-spikes_all = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57SpikeTimesAll.mat')['c57SpikeTimesAll']
-spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm-songbirds/songbirds/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
+audio_segm = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
+song_times = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57SongTimes.mat')['c57SongTimes']
+off_time = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57LightOffTime.mat')['c57LightOffTime']
+spikes_all = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57SpikeTimesAll.mat')['c57SpikeTimesAll']
+spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
 
 song_times = nap.IntervalSet(start=song_times[:,0], end=song_times[:,1])
-audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
 
 ts_dict_all = {key: nap.Ts(spikes_all[key, 0].flatten()) for key in range(spikes_all.shape[0])}
 spike_times_all = nap.TsGroup(ts_dict_all)
 
 
 binsize = 0.005   # in seconds
-# count = spike_times_quiet[spike_times_quiet.subset==0].count(binsize, ep=nap.IntervalSet(0, off_time))
 count = spike_times_all.count(binsize, ep=song_times)
 
 hist_window_sec = 0.05
 hist_window_size = int(hist_window_sec * count.rate)
-print(count.rate)
 
 basis = nmo.basis.RaisedCosineBasisLog(9, mode="conv", window_size=hist_window_size)
 time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
@@ -35,8 +32,8 @@ print(X.shape)
 duration = X.time_support.tot_length("s")
 start = X.time_support["start"]
 end = X.time_support["end"]
-training =nap.IntervalSet(song_times.start[0], song_times.end[21])
-testing =nap.IntervalSet(song_times.start[21], song_times.end[29])
+training = nap.IntervalSet(start[0], start[0] + duration * 0.7)
+testing = nap.IntervalSet(start[0] + duration * 0.7, end[-1])
 
 model = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.Ridge(regularizer_strength=1., solver_name="LBFGS"))
 model.fit(X.restrict(training), count.restrict(training).squeeze())
@@ -51,9 +48,9 @@ weights = model.coef_.reshape(count.shape[1], basis.n_basis_funcs, count.shape[1
 filters = np.einsum("jki,tk->ijt", weights, basis_kernels)
 
 # plot history filters
-filter_plot = filters[:10,:10,:]
+filter_plot = filters[:20,:20,:]
 
-def plot_coupling(responses, cmap_name="seismic",
+def plot_coupling(responses, cmap_name="bwr",
                       figsize=(8, 6), fontsize=15, alpha=0.5, cmap_label="hsv"):
 
     # plot heatmap
@@ -109,20 +106,22 @@ hfs_id = np.array(hf_song.index)
 
 # plot spiking rates
 spike_pred = model.predict(X.restrict(testing)) * count.rate
-ep = nap.IntervalSet(testing.start, testing.start+30)
+ep = nap.IntervalSet(testing.start, testing.start+60)
 
 fig = plt.figure(figsize=(8,4))
 ax1 = fig.add_subplot(2,1,1)
-firing_rate = spike_pred.restrict(ep).d[:,hfs_id[:15]]
+firing_rate = spike_pred.restrict(ep).d[:,:15]
 firing_rate = firing_rate.T / np.max(firing_rate, axis=1)
-plt.imshow(firing_rate[::-1], cmap="Blues", aspect="auto")
+plt.imshow(firing_rate[::-1], cmap="Greys", aspect="auto")
 ax1.set_ylabel("Neuron")
 ax1.set_title("Predicted firing rate")
 ax2 = fig.add_subplot(2,1,2)
-firing_rate = count.restrict(ep).d[:,hfs_id[:15]]
+firing_rate = count.restrict(ep).d[:,:15]
 firing_rate = firing_rate.T / np.max(firing_rate, axis=1)
-plt.imshow(firing_rate[::-1], cmap="Blues", aspect="auto")
+plt.imshow(firing_rate[::-1], cmap="Greys", aspect="auto")
 ax2.set_ylabel("Neuron")
 ax2.set_title("True firing rate")
+fig.subplots_adjust(hspace=1)
 plt.xlabel("Time (sec)")
+fig.suptitle("Song Data")
 plt.show()

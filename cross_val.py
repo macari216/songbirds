@@ -2,7 +2,6 @@ import numpy as np
 import scipy.io as sio
 import pynapple as nap
 import nemos as nmo
-from sklearn.utils import gen_batches
 import matplotlib.pyplot as plt
 
 nap.nap_config.suppress_conversion_warnings = True
@@ -38,50 +37,45 @@ hist_window_sec = 0.05
 # hist_window_size = [int(hist_window_sec[i] * count.rate) for i in range(len(hist_window_sec))]
 hist_window_size = int(hist_window_sec * count.rate)
 
-reg = [nmo.regularizer.Ridge(solver_name="GradientDescent",solver_kwargs={"stepsize": 0.001, "acceleration": False}),
-       nmo.regularizer.UnRegularized(solver_name="GradientDescent",solver_kwargs={"stepsize": 0.001, "acceleration": False})]
+n_bat = 100
+batch_size = count_train.time_support.tot_length() / n_bat
 
-batch_size = 5 #sec
-
-def batcher():
-
-    t = np.random.uniform(count_train.time_support[0, 0], count_train.time_support[0, 1]-batch_size)
-
-    while ~(t.isin(count_train.time_support)):
-        t = np.random.uniform(count_train.time_support[0, 0], count_train.time_support[0, 1] - batch_size)
-
-    ep = nap.IntervalSet(t, t+batch_size)
+def batcher(start):
+    end = start + batch_size
+    ep = nap.IntervalSet(start, end)
+    start = end
     counts = count_train.restrict(ep)
     X = basis.compute_features(counts)
 
-    return X, counts
+    return X, counts, start
 
+reg = [nmo.regularizer.Ridge(solver_name="GradientDescent",solver_kwargs={"stepsize": 0.001, "acceleration": False}),
+       nmo.regularizer.UnRegularized(solver_name="GradientDescent",solver_kwargs={"stepsize": 0.001, "acceleration": False})]
 
-n_ep = 25000
-
-logl = np.zeros((len(reg), n_ep))
+logl = np.zeros((len(reg), n_bat))
 
 for l, regul in enumerate(reg):
     basis = nmo.basis.RaisedCosineBasisLog(3, mode="conv", window_size=hist_window_size)
 
     glm = nmo.glm.PopulationGLM(regularizer=regul)
 
-    params, state = glm.initialize_solver(*batcher())
+    start = count_train.time_support.start[0]
 
-    for i in range(n_ep):
+    params, state = glm.initialize_solver(*batcher(start))
 
+    for i in range(n_bat):
         # Get a batch of data
-        X, Y = batcher()
+        X, Y,start = batcher(start)
 
         # Do one step of gradient descent.
         params, state = glm.update(params, state, X, Y)
 
         # Score the model along the time axis
-        logl[l,i] = glm.score(X, Y, score_type="log-likelihood")
+        logl[l, i] = glm.score(X, Y, score_type="log-likelihood")
 
 plt.figure()
-for i in range(len(hist_window_size)):
-    plt.plot(logl[i], label=hist_window_size[i], alpha=0.3)
+for i in range(len(reg)):
+    plt.plot(logl[i], label=reg[i], alpha=0.3)
 plt.xlabel("Iteration")
 plt.ylabel("Log-likelihood")
 plt.legend()

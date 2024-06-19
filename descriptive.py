@@ -60,7 +60,7 @@ match_id = np.intersect1d(hfs_id, hfq_id)
 print(song_rates.loc[match_id])
 print(quiet_rates.loc[match_id])
 
-# plot basis
+
 #choose spike history window
 hist_window_sec = 0.5
 hist_window_size = int(hist_window_sec * count.rate)
