@@ -58,7 +58,7 @@ for l, ws in enumerate(hist_window_size):
 
     for i in range(n_bat):
         # Get a batch of data
-        X, Y = batcher()
+        X, Y, start = batcher()
 
         # Do one step of gradient descent.
         params, state = glm.update(params, state, X, Y)
