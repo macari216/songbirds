@@ -3,10 +3,11 @@ import scipy.io as sio
 import matplotlib.pyplot as plt
 import pynapple as nap
 import nemos as nmo
-import pandas as pd
 import argparse
 
-rows = [101,174]
+parser = argparse.ArgumentParser()
+parser.add_argument("-n", "--Neuron", help="Specify GLM input neuron (0-194)")
+args = parser.parse_args()
 
 nap.nap_config.suppress_conversion_warnings = True
 
@@ -18,107 +19,110 @@ ei_labels = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57EI.
 #convert times to Interval Sets and spikes to TsGroups
 audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
 
-ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in rows}
+ts_dict_quiet = {int(args.Neuron): nap.Ts(spikes_quiet[int(args.Neuron), 0].flatten())}
 spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 
-# add E/I labels
-subset_labels = []
-for idx in range(195):
-    if idx in rows:
-        subset_labels.append(ei_labels[idx])
+# add E/I label
+spike_times_quiet["EI"] = ei_labels[int(args.Neuron)]
 
-spike_times_quiet["EI"] = subset_labels
+# time intervals for CV
+kf = 5
 
-# spike count
-training_end = off_time * 0.7
-time_quiet_train = nap.IntervalSet(0, training_end).set_diff(audio_segm)
-time_quiet_test = nap.IntervalSet(training_end, off_time).set_diff(audio_segm)
+time_on = nap.IntervalSet(0, off_time).set_diff(audio_segm)
+tests = []
+t_st = 0
+one_int = off_time*0.2
+for i in range(kf):
+    t_end = t_st + one_int
+    test = nap.IntervalSet(t_st, t_end).set_diff(audio_segm)
+    tests.append(test)
+    t_st = t_end
 
-binsize = 0.001   # in seconds
-count_train = spike_times_quiet.count(binsize, ep=time_quiet_train)
+#training epochs
+n_ep = 30
 
-count_test = spike_times_quiet.count(binsize, ep=time_quiet_test)
+# output lists
+score_train = np.zeros((kf, n_ep))
+score_test = np.zeros((kf, n_ep))
+weights = []
+filters = []
+intercepts = []
 
-n_neurons = count_test.shape[1]
+# compute train and test counts
+binsize = 0.0001
 
-#choose spike history window
-hist_window_sec = 0.01
-hist_window_size = int(hist_window_sec * count_test.rate)
+for k, test_int in enumerate(tests):
+    count_test = spike_times_quiet.count(binsize, ep=test_int)
 
-# define  basis
-n_fun = 9
-basis = nmo.basis.RaisedCosineBasisLog(n_fun, mode="conv", window_size=hist_window_size)
-time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
-time *= hist_window_sec
+    train_int = time_on.set_diff(test_int)
+    count_train = spike_times_quiet.count(binsize, ep=train_int)
 
-X_test = basis.compute_features(count_test)
+    # choose spike history window
+    hist_window_sec = 0.004
+    hist_window_size = int(hist_window_sec * count_train.rate)
+
+    # define  basis
+    n_fun = 9
+    basis = nmo.basis.RaisedCosineBasisLog(n_fun, mode="conv", window_size=hist_window_size)
+    time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
+    time *= hist_window_sec
+
+    X_test = basis.compute_features(count_test)
 
 
-# implement minibatching
-n_bat = 1000
-batch_size = time_quiet_train.tot_length() / n_bat
+    # implement minibatching
+    n_bat = 500
+    batch_size = train_int.tot_length() / n_bat
 
-def batcher(start):
-    end = start + batch_size
-    ep = nap.IntervalSet(start, end)
-    start = end
-    counts = count_train.restrict(ep)
-    X = basis.compute_features(counts)
-    return X, counts, start
+    def batcher(start):
+        end = start + batch_size
+        ep = nap.IntervalSet(start, end)
 
-# # mask for group lasso
-# n_groups = n_neurons
-# n_features = n_neurons * n_fun
-#
-# mask = np.zeros((n_groups, n_features))
-# for i in range(n_groups):
-#     mask[i, i*n_fun:i*n_fun+n_fun] = np.ones(n_fun)
+        while not count_train.time_support.intersect(ep):
+            start += batch_size
+            end += batch_size
+            ep = nap.IntervalSet(start, end)
+            if end > count_train.time_support.end[-1]:
+                break
 
-# define and initialize model
-model = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.UnRegularized(
-    solver_name="GradientDescent", solver_kwargs={"stepsize": 0.1, "acceleration": False}))
-start = time_quiet_train.start[0]
-params, state = model.initialize_solver(*batcher(start))
+        start = end
+        counts = count_train.restrict(ep)
+        X = basis.compute_features(counts)
+        return X, counts.squeeze(), start
 
-# train model
-n_ep = 60
-score_train = np.zeros(n_ep)
-score_test = np.zeros(n_ep)
+    # define and initialize model
+    model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
+        solver_name="GradientDescent", solver_kwargs={"stepsize": 0.1, "acceleration": False}))
+    start = train_int.start[0]
+    params, state = model.initialize_solver(*batcher(start))
 
-for ep in range(n_ep):
-    start = time_quiet_train.start[0]
-    for i in range(n_bat):
-        # Get a batch of data
-        X, Y, start = batcher(start)
+    # train model
+    for ep in range(n_ep):
+        start = train_int.start[0]
+        for i in range(n_bat):
+            # Get a batch of data
+            X, Y, start = batcher(start)
 
-        # Do one step of gradient descent.
-        params, state = model.update(params, state, X, Y)
+            # Do one step of gradient descent.
+            params, state = model.update(params, state, X, Y)
 
-    # Score the model along the time axis
-    score_train[ep] = model.score(X, Y, score_type="log-likelihood")
-    score_test[ep] = model.score(X_test, count_test.squeeze(), score_type="log-likelihood")
+        # Score the model along the time axis
+        score_train[k,ep] = model.score(X, Y, score_type="log-likelihood")
+        score_test[k,ep] = model.score(X_test, count_test.squeeze(), score_type="log-likelihood")
 
-    if ep%5 ==0:
-        print(f"Epoch: {ep}, train ll:{score_train[ep]}, test ll:{score_test[ep]}")
+        if ep%10 ==0:
+            print(f"Fold: {k}, epoch: {ep}, train ll:{score_train[k,ep]}, test ll:{score_test[k,ep]}")
 
-# model output
-weights = model.coef_.reshape(n_neurons, basis.n_basis_funcs, n_neurons)
-filters = np.einsum("jki,tk->ijt", weights, basis_kernels)
-spike_pred = model.predict(X_test)
-intercept = model.intercept_
-coef = model.coef_
-results_dict = {"weights": weights, "filters": filters, "intercept": intercept, "coef": coef,
-                "spike_pred": spike_pred, "time": time, "train_ll": score_train, "test_ll": score_test}
+    # model output
+    weights.append(model.coef_)
+    filters.append(np.matmul(basis_kernels, np.squeeze(model.coef_)))
+    intercepts.append(model.intercept_)
 
-np.save("/Users/macari216/Desktop/glm_songbirds/songbirds/results_101_174.npy", results_dict)
 
-plt.figure()
-plt.plot(score_train, color='b', label="train")
-plt.plot(score_test, color='r', label="test")
-plt.xlabel("Epoch")
-plt.ylabel("log-likelihood")
-plt.legend()
-plt.show()
+results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
+                "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
+
+np.save("/Users/macari216/Desktop/glm_songbirds/songbirds/results_0.npy", results_dict)
 
 
 
