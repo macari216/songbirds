@@ -122,7 +122,7 @@ for k, test_int in enumerate(tests):
 results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
                 "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
 
-np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_{args.Neuron}.npy", results_dict)
+np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_n{args.Neuron}.npy", results_dict)
 
 
 
