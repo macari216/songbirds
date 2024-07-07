@@ -11,10 +11,10 @@ args = parser.parse_args()
 
 nap.nap_config.suppress_conversion_warnings = True
 
-audio_segm = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
-off_time = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57LightOffTime.mat')['c57LightOffTime']
-spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
-ei_labels = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57EI.mat')['c57EI']
+audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
+off_time = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57LightOffTime.mat')['c57LightOffTime']
+spikes_quiet = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
+ei_labels = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/songbirds/c57EI.mat')['c57EI']
 
 #convert times to Interval Sets and spikes to TsGroups
 audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
@@ -110,8 +110,8 @@ for k, test_int in enumerate(tests):
         score_train[k,ep] = model.score(X, Y, score_type="log-likelihood")
         score_test[k,ep] = model.score(X_test, count_test.squeeze(), score_type="log-likelihood")
 
-        if ep%10 ==0:
-            print(f"Fold: {k}, epoch: {ep}, train ll:{score_train[k,ep]}, test ll:{score_test[k,ep]}")
+        if ep%5==0:
+            print(f"K: {k}, Ep: {ep}, train ll: {score_train[k,ep]}, test ll: {score_test[k,ep]}")
 
     # model output
     weights.append(model.coef_)
@@ -122,7 +122,7 @@ for k, test_int in enumerate(tests):
 results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
                 "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
 
-np.save("/Users/macari216/Desktop/glm_songbirds/songbirds/results_0.npy", results_dict)
+np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_{args.Neuron}.npy", results_dict)
 
 
 
