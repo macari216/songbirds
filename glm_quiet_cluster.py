@@ -19,14 +19,15 @@ ei_labels = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/songbirds/c57EI
 #convert times to Interval Sets and spikes to TsGroups
 audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
 
-ts_dict_quiet = {int(args.Neuron): nap.Ts(spikes_quiet[int(args.Neuron), 0].flatten())}
+# ts_dict_quiet = {int(args.Neuron): nap.Ts(spikes_quiet[int(args.Neuron), 0].flatten())}
+ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
 spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 
 # add E/I label
-spike_times_quiet["EI"] = ei_labels[int(args.Neuron)]
+spike_times_quiet["EI"] = ei_labels
 
 # time intervals for CV
-kf = 5
+kf = 1
 
 time_on = nap.IntervalSet(0, off_time).set_diff(audio_segm)
 tests = []
@@ -39,7 +40,7 @@ for i in range(kf):
     t_st = t_end
 
 #training epochs
-n_ep = 30
+n_ep = 15
 
 # output lists
 score_train = np.zeros((kf, n_ep))
@@ -71,7 +72,7 @@ for k, test_int in enumerate(tests):
 
 
     # implement minibatching
-    n_bat = 500
+    n_bat = 1000
     batch_size = train_int.tot_length() / n_bat
 
     def batcher(start):
@@ -86,9 +87,10 @@ for k, test_int in enumerate(tests):
                 break
 
         start = end
-        counts = count_train.restrict(ep)
-        X = basis.compute_features(counts)
-        return X, counts.squeeze(), start
+        X_counts = count_train.restrict(ep)
+        X = basis.compute_features(X_counts)
+        Y_counts = count_train[:, int(args.Neuron)].restrict(ep)
+        return X, Y_counts.squeeze(), start
 
     # define and initialize model
     model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
