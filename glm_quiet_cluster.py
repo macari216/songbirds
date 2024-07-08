@@ -14,7 +14,7 @@ nap.nap_config.suppress_conversion_warnings = True
 audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
 off_time = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57LightOffTime.mat')['c57LightOffTime']
 spikes_quiet = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
-ei_labels = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/songbirds/c57EI.mat')['c57EI']
+ei_labels = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57EI.mat')['c57EI']
 
 #convert times to Interval Sets and spikes to TsGroups
 audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
