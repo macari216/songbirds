@@ -7,10 +7,10 @@ import pandas as pd
 
 nap.nap_config.suppress_conversion_warnings = True
 
-audio_segm = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
-off_time = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57LightOffTime.mat')['c57LightOffTime']
-spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
-ei_labels = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57EI.mat')['c57EI']
+audio_segm = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57AudioSegments.mat')['c57AudioSegments']
+off_time = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57LightOffTime.mat')['c57LightOffTime']
+spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
+ei_labels = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57EI.mat')['c57EI']
 
 #convert times to Interval Sets and spikes to TsGroups
 audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
@@ -32,17 +32,17 @@ time_quiet_test = nap.IntervalSet(training_end, off_time).set_diff(audio_segm)
 time_quiet_test = time_quiet_test.drop_short_intervals(1,'s')
 
 binsize = 0.001   # in seconds
-count_train = nap.TsdFrame(pd.concat([exc.count(binsize, ep=time_quiet_train).as_dataframe(),
-                        inh.count(binsize, ep=time_quiet_train).as_dataframe()], axis=1))
+# count_train = nap.TsdFrame(pd.concat([exc.count(binsize, ep=time_quiet_train).as_dataframe(),
+#                         inh.count(binsize, ep=time_quiet_train).as_dataframe()], axis=1))
 
 count_test = nap.TsdFrame(pd.concat([exc.count(binsize, ep=time_quiet_test).as_dataframe(),
                         inh.count(binsize, ep=time_quiet_test).as_dataframe()], axis=1))
 
-n_neurons = count_train.shape[1]
+n_neurons = count_test.shape[1]
 
 #choose spike history window
 hist_window_sec = 0.01
-hist_window_size = int(hist_window_sec * count_train.rate)
+hist_window_size = int(hist_window_sec * count_test.rate)
 
 # define  basis
 n_fun = 5
@@ -55,15 +55,15 @@ X_test = basis.compute_features(count_test)
 
 # implement minibatching
 n_bat = 1000
-batch_size = count_train.time_support.tot_length() / n_bat
+batch_size = time_quiet_train.tot_length() / n_bat
 
 def batcher(start):
     end = start + batch_size
     ep = nap.IntervalSet(start, end)
     start = end
-    counts = count_train.restrict(ep)
+    counts = nap.TsdFrame(pd.concat([exc.count(binsize, ep=ep).as_dataframe(),
+                        inh.count(binsize, ep=ep).as_dataframe()], axis=1))
     X = basis.compute_features(counts)
-
     return X, counts, start
 
 # mask for group lasso
@@ -78,7 +78,7 @@ for i in range(n_groups):
 model = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.GroupLasso(
     solver_name="ProximalGradient", mask=mask, solver_kwargs={"stepsize": 0.1, "acceleration": False},
     regularizer_strength=2e-5))
-start = count_train.time_support.start[0]
+start = time_quiet_train.start[0]
 params, state = model.initialize_solver(*batcher(start))
 
 # train model
@@ -86,7 +86,7 @@ n_ep = 200
 score_train = np.zeros(n_ep)
 
 for ep in range(n_ep):
-    start = count_train.time_support.start[0]
+    start = time_quiet_train.start[0]
     for i in range(n_bat):
         # Get a batch of data
         X, Y, start = batcher(start)
