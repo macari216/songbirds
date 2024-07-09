@@ -4,20 +4,29 @@ import pynapple as nap
 import nemos as nmo
 import matplotlib.pyplot as plt
 
-results_dict = np.load("/Users/macari216/Desktop/glm_songbirds/songbirds/results.npy",allow_pickle=True).item()
+results_dict = np.load("/songbirds/results.npy", allow_pickle=True).item()
 weights = results_dict["weights"]
 filters = results_dict["filters"]
 time = results_dict["time"]
 spike_pred = results_dict["spike_pred"]
 
-audio_segm = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
 song_times = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57SongTimes.mat')['c57SongTimes']
+audio_segm = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
 off_time = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57LightOffTime.mat')['c57LightOffTime']
-spikes_all = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57SpikeTimesAll.mat')['c57SpikeTimesAll']
 spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
+spikes_all = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57SpikeTimesAll.mat')['c57SpikeTimesAll']
 
 song_times = nap.IntervalSet(start=song_times[:,0], end=song_times[:,1])
 audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
+
+audio_on = audio_segm[:149]
+training_end = off_time * 0.7
+time_on_train = nap.IntervalSet(0, training_end)
+time_on_test = nap.IntervalSet(training_end, off_time)
+time_quiet_train = time_on_train.set_diff(audio_on)
+time_quiet_train = time_quiet_train.drop_short_intervals(1,'s')
+time_quiet_test = time_on_test.set_diff(audio_on)
+time_quiet_test = time_quiet_test.drop_short_intervals(1,'s')
 
 ts_dict_all = {key: nap.Ts(spikes_all[key, 0].flatten()) for key in range(spikes_all.shape[0])}
 spike_times_all = nap.TsGroup(ts_dict_all)
@@ -25,21 +34,8 @@ spike_times_all = nap.TsGroup(ts_dict_all)
 ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
 spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 
-audio_on = audio_segm[:149]
-time_on = nap.IntervalSet(0, off_time)
-time_quiet = time_on.set_diff(audio_on)
-time_quiet = time_quiet.drop_short_intervals(1,'s')
-
-binsize = 0.1
-count = spike_times_quiet.count(binsize, ep=time_quiet)
-
-model = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.Ridge(regularizer_strength=1.0, solver_name="LBFGS"))
-
-params = ()
-
-model.predict()
-
-quit()
+binsize = 0.005
+count_test = spike_times_quiet.count(binsize, ep=time_quiet_test)
 
 # most active neurons
 quiet_rates = spike_times_quiet['rate']
@@ -48,15 +44,18 @@ hf_quiet = quiet_rates[quiet_rates > quiet_thr]
 hfq_id = np.array(hf_quiet.index)
 
 # plot coupling weights for 2 neurons
+n1 = 91
+n2 = 90
 plt.figure()
-plt.title("Coupling Filter From Neuron 1 To Neuron 2")
-plt.plot(time, filters[1,0,:], "k", lw=2)
+plt.title(f"Coupling Filter From Neuron {n1} To Neuron {n2+1}")
+plt.title(f"Coupling Filter From Neuron {n1} To Neuron {n2+1}")
+plt.plot(time, filters[n1,n2,:], "k", lw=2)
 plt.axhline(0, color="k", lw=0.5)
 plt.xlabel("Time from spike (sec)")
 plt.ylabel("Weight")
 
 # plot spiking rates
-ep = nap.IntervalSet(8610, 8610+60)
+ep = nap.IntervalSet(8716, 8716+60)
 
 fig = plt.figure(figsize=(8,4))
 ax1 = fig.add_subplot(2,1,1)
@@ -66,9 +65,9 @@ plt.imshow(firing_rate[::-1], cmap="Greys", aspect="auto")
 ax1.set_ylabel("Neuron")
 ax1.set_title("Predicted firing rate")
 ax2 = fig.add_subplot(2,1,2)
-firing_rate = count.restrict(ep).d[:,:15]
+firing_rate = count_test.restrict(ep).d[:,:15]
 firing_rate = firing_rate.T / np.max(firing_rate, axis=1)
-plt.imshow(firing_rate[::-1], cmap="Greys", aspect="auto")
+plt.imshow(firing_rate[:,:-1], cmap="Greys", aspect="auto")
 ax2.set_ylabel("Neuron")
 ax2.set_title("True firing rate")
 fig.subplots_adjust(hspace=1)
@@ -126,6 +125,15 @@ def plot_coupling(responses, cmap_name="bwr",
 
 plot_coupling(filter_plot)
 plt.show()
+
+sum_filt = np.sum(filters, axis=2)
+sum_filt_n = (sum_filt.T / np.abs(sum_filt).max(axis=1)).T
+plt.figure()
+plt.imshow(sum_filt_n, cmap='bwr')
+plt.colorbar()
+plt.xlabel("pre-synaptic")
+plt.ylabel("post-synaptic")
+plt.title("inferred filters (group lasso)")
 
 # resp = np.matmul(X, model.coef_)
 # plt.plot(resp[:,0], lw=0.5)
@@ -213,10 +221,59 @@ ax2.set_xlabel('time from spike (sec)')
 # plt.ylabel("second half")
 # plt.title("Weight Amplitudes")
 
-# # mask for group lasso (?? maybe)
-# num_groups = count.shape[1]
-# num_features = count.shape[1]*hist_window_size
+# n=3
+# ind = np.arange(n)
+# width = 0.27
 #
-# mask = np.zeros((num_groups, num_features))
-# for i in range(num_groups):
-#     mask[i, i*hist_window_size:i*hist_window_size+hist_window_size] = np.ones(hist_window_size)
+# plt.figure()
+# for i in range(5):
+#     plt.bar(ind+width*i, fractions[i], width)
+
+
+# filter error bars
+# peak_ee = np.zeros((101,101))
+# for i in range(101):
+#     for j in range(101):
+#         ij_peak = np.argmax(np.abs(filters_ee), axis=2)[i,j]
+#         peak_ee[i,j] = filters_ee[i,j,ij_peak]
+
+# mean_ee_exc = filters_ee[peak_ee>0].mean(axis=0)
+# lower_ee_exc = mean_ee_exc - filters_ee[peak_ee>0].std(axis=0)
+# upper_ee_exc = mean_ee_exc + filters_ee[peak_ee>0].std(axis=0)
+
+# plt.figure()
+# plt.plot(time, filters_ee[peak_ee>0].mean(axis=0))
+# mean_ee_exc = filters_ee[peak_ee>0].mean(axis=0)
+# lower_ee_exc = mean_ee_exc - filters_ee[peak_ee>0].std(axis=0)
+# upper_ee_exc = mean_ee_exc + filters_ee[peak_ee>0].std(axis=0)
+# fig, ax = plt.subplots(figsize=(9,5))
+# ax.plot(time, mean_ee_exc, label='filter mean')
+# ax.plot(time, lower_ee_exc, color='tab:blue', alpha=0.1)
+# ax.plot(time, upper_ee_exc, color='tab:blue', alpha=0.1)
+# ax.fill_between(time, lower_ee_exc, upper_ee_exc, alpha=0.2)
+# ax.set_xlabel('time from spike')
+# ax.set_ylabel('filter')
+# ax.spines['top'].set_visible(False)
+# ax.spines['right'].set_visible(False)
+# plt.show()
+
+filters_exc = filters[:,:101,:]
+filters_inh = filters[:,-94:,:]
+
+n_conx_exc = [ (filters_exc[:,i,:])[(filters_exc[:,i,:]).sum(axis=1)!=0].shape[0] for i in range(101)]
+n_conx_exc = np.array(n_conx_exc)
+n_conx_inh = [ (filters_inh[:,i,:])[(filters_inh[:,i,:]).sum(axis=1)!=0].shape[0] for i in range(94)]
+n_conx_inh = np.array(n_conx_inh)
+
+color_exc = np.where(n_conx_exc >= np.quantile(n_conx_exc, 0.9), 'r', 'mistyrose')
+color_inh = np.where(n_conx_inh >= np.quantile(n_conx_inh, 0.9), 'b', 'lightsteelblue')
+
+fig, (ax1, ax2) = plt.subplots(1,2, figsize=(8,4))
+ax1.bar(np.arange(1,102), n_conx_exc, color=color_exc)
+ax1.set_xlabel("pre-synaptic neuron")
+ax1.set_ylabel("number of connections")
+ax1.set_title("putative excitatory neurons")
+ax2.bar(np.arange(1,95), n_conx_inh, color=color_inh)
+ax2.set_xlabel("pre-synaptic neuron")
+ax2.set_title("putative inhibitory neurons")
+fig.suptitle("candidate hub neurons")
