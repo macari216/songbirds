@@ -40,7 +40,7 @@ for i in range(kf):
     t_st = t_end
 
 #training epochs
-n_ep = 15
+n_ep = 1
 
 # output lists
 score_train = np.zeros((kf, n_ep))
@@ -53,11 +53,10 @@ intercepts = []
 binsize = 0.0001
 
 for k, test_int in enumerate(tests):
-    count_test = spike_times_quiet.count(binsize, ep=test_int)
+    #count_test = spike_times_quiet.count(binsize, ep=test_int)
 
     train_int = time_on.set_diff(test_int)
     count_train = spike_times_quiet.count(binsize, ep=train_int)
-
     # choose spike history window
     hist_window_sec = 0.004
     hist_window_size = int(hist_window_sec * count_train.rate)
@@ -67,19 +66,17 @@ for k, test_int in enumerate(tests):
     basis = nmo.basis.RaisedCosineBasisLog(n_fun, mode="conv", window_size=hist_window_size)
     time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
     time *= hist_window_sec
-
-    X_test = basis.compute_features(count_test)
-
+    #X_test = basis.compute_features(count_test)
 
     # implement minibatching
-    n_bat = 1000
+    n_bat = 5000
     batch_size = train_int.tot_length() / n_bat
 
     def batcher(start):
         end = start + batch_size
         ep = nap.IntervalSet(start, end)
 
-        while not count_train.time_support.intersect(ep):
+        while not train_int.intersect(ep):
             start += batch_size
             end += batch_size
             ep = nap.IntervalSet(start, end)
@@ -87,14 +84,16 @@ for k, test_int in enumerate(tests):
                 break
 
         start = end
+        #count_train = spike_times_quiet.count(binsize, ep=ep)
         X_counts = count_train.restrict(ep)
+        print(X_counts.shape)
         X = basis.compute_features(X_counts)
         Y_counts = count_train[:, int(args.Neuron)].restrict(ep)
         return X, Y_counts.squeeze(), start
 
     # define and initialize model
     model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
-        solver_name="GradientDescent", solver_kwargs={"stepsize": 0.1, "acceleration": False}))
+        solver_name="GradientDescent", solver_kwargs={"stepsize": 0.2, "acceleration": False}))
     start = train_int.start[0]
     params, state = model.initialize_solver(*batcher(start))
 
@@ -110,7 +109,7 @@ for k, test_int in enumerate(tests):
 
         # Score the model along the time axis
         score_train[k,ep] = model.score(X, Y, score_type="log-likelihood")
-        score_test[k,ep] = model.score(X_test, count_test.squeeze(), score_type="log-likelihood")
+        #score_test[k,ep] = model.score(X_test, count_test.squeeze(), score_type="log-likelihood")
 
         if ep%5==0:
             print(f"K: {k}, Ep: {ep}, train ll: {score_train[k,ep]}, test ll: {score_test[k,ep]}")
