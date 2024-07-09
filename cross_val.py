@@ -5,7 +5,6 @@ import nemos as nmo
 import matplotlib.pyplot as plt
 
 nap.nap_config.suppress_conversion_warnings = True
-np.random.seed(16)
 
 audio_segm = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
 off_time = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57LightOffTime.mat')['c57LightOffTime']
@@ -29,11 +28,23 @@ binsize = 0.005   # in seconds
 count_train = spike_times_quiet.count(binsize, ep=time_quiet_train)
 count_test = spike_times_quiet.count(binsize, ep=time_quiet_test)
 
-hist_window_sec = [0.02, 0.05, 0.1, 0.9]
-hist_window_size = [int(hist_window_sec[i] * count_train.rate) for i in range(len(hist_window_sec))]
-# hist_window_size = int(hist_window_sec * count_train.rate)
+n_neurons = count_train.shape[1]
 
-n_bat = 1000
+hist_window_sec = 0.03
+# hist_window_size = [int(hist_window_sec[i] * count_train.rate) for i in range(len(hist_window_sec))]
+hist_window_size = int(hist_window_sec * count_train.rate)
+
+n_fun = 5
+
+# mask for group lasso
+n_groups = n_neurons
+n_features = n_neurons * n_fun
+
+mask = np.zeros((n_groups, n_features))
+for i in range(n_groups):
+    mask[i, i*n_fun:i*n_fun+n_fun] = np.ones(n_fun)
+
+n_bat = 100
 batch_size = count_train.time_support.tot_length() / n_bat
 
 def batcher(start):
@@ -45,36 +56,50 @@ def batcher(start):
 
     return X, counts, start
 
-logl = np.zeros((len(hist_window_size), n_bat))
+reg_strength = [8e-5, 5e-5, 2e-5]
 
-for l, ws in enumerate(hist_window_size):
-    basis = nmo.basis.RaisedCosineBasisLog(5, mode="conv", window_size=ws)
+n_ep = 100
+logl = np.zeros((len(reg_strength), n_ep))
+zero_fraction = np.zeros(len(reg_strength))
 
-    glm = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.Ridge(solver_name="GradientDescent",solver_kwargs={"stepsize": 0.1, "acceleration": False}))
+for l, reg in enumerate(reg_strength):
+    basis = nmo.basis.RaisedCosineBasisLog(n_fun, mode="conv", window_size=hist_window_size)
+
+    glm = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.GroupLasso(
+        solver_name="ProximalGradient", mask=mask, solver_kwargs={"stepsize": 0.1, "acceleration": False},
+        regularizer_strength=reg))
 
     start = count_train.time_support.start[0]
 
     params, state = glm.initialize_solver(*batcher(start))
 
-    for i in range(n_bat):
-        # Get a batch of data
-        X, Y, start = batcher()
+    for ep in range(n_ep):
+        start = count_train.time_support.start[0]
+        for i in range(n_bat):
+            # Get a batch of data
+            X, Y, start = batcher(start)
 
-        # Do one step of gradient descent.
-        params, state = glm.update(params, state, X, Y)
+            # Do one step of gradient descent.
+            params, state = glm.update(params, state, X, Y)
 
-        # Score the model along the time axis
-        logl[l, i] = glm.score(X, Y, score_type="log-likelihood")
+            # Score the model along the time axis
+        logl[l, ep] = glm.score(X, Y, score_type="log-likelihood")
 
+        if ep%5 ==0:
+            print("Epoch:", ep, ", score:", logl[l,ep])
+
+    zero_fraction[l] = glm.coef_[glm.coef_==0].size / glm.coef_.size
     X_test = basis.compute_features(count_test)
     score_test = glm.score(X_test, count_test.squeeze(), score_type="log-likelihood")
+    print(reg)
     print("Score(train data):", logl[l, -1])
     print("Score(test data):", score_test)
+    print("Fraction of weights set to 0:", zero_fraction[l])
 
 plt.figure()
-for i in range(len(hist_window_size)):
-    plt.plot(logl[i], label=hist_window_size[i], alpha=0.3)
-plt.xlabel("Iteration")
-plt.ylabel("Log-likelihood")
+for i in range(len(reg_strength)):
+    plt.plot(logl[i], label=reg_strength[i], alpha=0.3)
+plt.xlabel("Epoch")
+plt.ylabel("pseudo-r2")
 plt.legend()
 plt.show()
