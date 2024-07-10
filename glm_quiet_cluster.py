@@ -1,3 +1,4 @@
+from datetime import datetime
 import numpy as np
 import scipy.io as sio
 import matplotlib.pyplot as plt
@@ -56,20 +57,24 @@ for k, test_int in enumerate(tests):
     #count_test = spike_times_quiet.count(binsize, ep=test_int)
 
     train_int = time_on.set_diff(test_int)
+    print(f"before computing counts:{datetime.now().time()}")
     count_train = spike_times_quiet.count(binsize, ep=train_int)
+    print(f"computed counts:{datetime.now().time()}")
     # choose spike history window
     hist_window_sec = 0.004
     hist_window_size = int(hist_window_sec * count_train.rate)
 
     # define  basis
     n_fun = 9
+    print(f"before computing basis: {datetime.now().time()}")
     basis = nmo.basis.RaisedCosineBasisLog(n_fun, mode="conv", window_size=hist_window_size)
+    print(f"after computing basis:{datetime.now().time()}")
     time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
     time *= hist_window_sec
     #X_test = basis.compute_features(count_test)
 
     # implement minibatching
-    n_bat = 5000
+    n_bat = 1000
     batch_size = train_int.tot_length() / n_bat
 
     def batcher(start):
@@ -85,9 +90,11 @@ for k, test_int in enumerate(tests):
 
         start = end
         #count_train = spike_times_quiet.count(binsize, ep=ep)
+        print(f"before: {datetime.now().time()}")
         X_counts = count_train.restrict(ep)
-        print(X_counts.shape)
+        print(f"loaded into memory:{datetime.now().time()}")
         X = basis.compute_features(X_counts)
+        print(f"computed X: {datetime.now().time()}")
         Y_counts = count_train[:, int(args.Neuron)].restrict(ep)
         return X, Y_counts.squeeze(), start
 
@@ -100,25 +107,28 @@ for k, test_int in enumerate(tests):
     # train model
     for ep in range(n_ep):
         start = train_int.start[0]
+        # for i in range(n_bat):
         for i in range(n_bat):
             # Get a batch of data
             X, Y, start = batcher(start)
 
             # Do one step of gradient descent.
+            print(f"before model step: {datetime.now().time()}")
             params, state = model.update(params, state, X, Y)
+            print(f"after model step: {datetime.now().time()}")
+            print(i,"-------------------------")
 
         # Score the model along the time axis
         score_train[k,ep] = model.score(X, Y, score_type="log-likelihood")
         #score_test[k,ep] = model.score(X_test, count_test.squeeze(), score_type="log-likelihood")
 
-        if ep%5==0:
-            print(f"K: {k}, Ep: {ep}, train ll: {score_train[k,ep]}, test ll: {score_test[k,ep]}")
+        print(f"K: {k}, Ep: {ep}, train ll: {score_train[k,ep]}, test ll: {score_test[k,ep]}")
 
     # model output
-    weights.append(model.coef_)
-    filters.append(np.matmul(basis_kernels, np.squeeze(model.coef_)))
+    weights.append(model.coef_.reshape(n_fun,-1))
+    filters.append(np.matmul(basis_kernels, model.coef_.reshape(n_fun,-1)))
+    print(np.shape(np.matmul(basis_kernels, model.coef_.reshape(n_fun,-1))))
     intercepts.append(model.intercept_)
-
 
 results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
                 "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
