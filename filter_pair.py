@@ -1,18 +1,26 @@
+import pandas as pd
 import scipy.io as sio
 import numpy as np
 import matplotlib.pyplot as plt
 import pynapple as nap
 import nemos as nmo
 from itertools import combinations, product
+import argparse
 
-rows = [124,125]
+parser = argparse.ArgumentParser()
+parser.add_argument("-n1", "--Neuron1", help="post-synaptic neuron")
+parser.add_argument("-n2", "--Neuron2", help="pre-synaptic neuron")
+args = parser.parse_args()
+
+
+rows = [int(args.Neuron1),int(args.Neuron2)]
 
 nap.nap_config.suppress_conversion_warnings = True
 
-audio_segm = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57AudioSegments.mat')['c57AudioSegments']
-off_time = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57LightOffTime.mat')['c57LightOffTime']
-spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
-ei_labels = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57EI.mat')['c57EI']
+audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
+off_time = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57LightOffTime.mat')['c57LightOffTime']
+spikes_quiet = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
+ei_labels = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57EI.mat')['c57EI']
 
 audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
 ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in rows}
@@ -59,7 +67,7 @@ model = nmo.glm.PopulationGLM(regularizer=nmo.regularizer.UnRegularized(
 start = time_quiet_train.start[0]
 params, state = model.initialize_solver(*batcher(start))
 
-n_ep = 15
+n_ep = 25
 
 score_train = np.zeros(n_ep)
 
