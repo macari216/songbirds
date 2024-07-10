@@ -3,6 +3,11 @@ import scipy.io as sio
 import pynapple as nap
 import nemos as nmo
 from datetime import datetime
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-n", "--Neuron", help="Specify GLM input neuron (0-194)")
+args = parser.parse_args()
 
 nap.nap_config.suppress_conversion_warnings = True
 
@@ -52,7 +57,7 @@ def batcher(start):
     print(f"before convolution: {datetime.now().time()}")
     X = basis.compute_features(X_counts)
     print(f"before restrict Y: {datetime.now().time()}")
-    Y_counts = count_train[:, 0].restrict(ep)
+    Y_counts = count_train[:, int(args.Neuron)].restrict(ep)
     return X, Y_counts.squeeze(), start
 
 model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
