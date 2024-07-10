@@ -13,10 +13,10 @@ weights = results_dict["weights"]
 filters = results_dict["filters"]
 time = results_dict["time"]
 
-audio_segm = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57AudioSegments.mat')['c57AudioSegments']
-off_time = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57LightOffTime.mat')['c57LightOffTime']
-spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
-ei_labels = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds/c57EI.mat')['c57EI']
+audio_segm = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57AudioSegments.mat')['c57AudioSegments']
+off_time = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57LightOffTime.mat')['c57LightOffTime']
+spikes_quiet = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
+ei_labels = sio.loadmat('/Users/macari216/Desktop/glm_songbirds/songbirds_data/c57EI.mat')['c57EI']
 
 audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
 
