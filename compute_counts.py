@@ -46,10 +46,3 @@ def batcher(start):
 for i in range(10):
     X, Y, start = batcher(start)
     print(f"after returning X and Y: {datetime.now().time()}")
-
-print("COMPUTING ALL COUNTS")
-print(f"before computing counts: {datetime.now().time()}")
-counts = spike_times_quiet.count(binsize, ep=time_on)
-print(f"after computing counts: {datetime.now().time()}")
-
-c
