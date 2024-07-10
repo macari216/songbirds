@@ -21,7 +21,9 @@ audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
 ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
 spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 
-spike_times_quiet["EI"] = ei_labelstime_on = nap.IntervalSet(0, off_time).set_diff(audio_segm)
+spike_times_quiet["EI"] = ei_labels
+
+time_on = nap.IntervalSet(0, off_time).set_diff(audio_segm)
 
 training_end = off_time * 0.8
 time_quiet_train = nap.IntervalSet(0, training_end).set_diff(audio_segm)
