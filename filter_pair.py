@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pynapple as nap
 import nemos as nmo
-from itertools import combinations, product
+from itertools import combinations
 import argparse
 
 parser = argparse.ArgumentParser()
