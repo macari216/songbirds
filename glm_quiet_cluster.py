@@ -11,7 +11,6 @@ parser.add_argument("-n", "--Neuron", help="Specify GLM input neuron (0-194)")
 args = parser.parse_args()
 
 nap.nap_config.suppress_conversion_warnings = True
-nap.nap_config.set_backend("jax")
 
 audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
 off_time = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57LightOffTime.mat')['c57LightOffTime']
@@ -41,19 +40,19 @@ for i in range(kf):
     tests.append(test)
     t_st = t_end
 
-    # choose spike history window
-    hist_window_sec = 0.004
-    mean_rate = 9999
-    hist_window_size = int(hist_window_sec * mean_rate)
+# choose spike history window
+hist_window_sec = 0.004
+mean_rate = 9999
+hist_window_size = int(hist_window_sec * mean_rate)
 
-    # define  basis
-    n_fun = 9
-    basis = nmo.basis.RaisedCosineBasisLog(n_fun, mode="conv", window_size=hist_window_size)
-    time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
-    time *= hist_window_sec
+# define  basis
+n_fun = 9
+basis = nmo.basis.RaisedCosineBasisLog(n_fun, mode="conv", window_size=hist_window_size)
+time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
+time *= hist_window_sec
 
 #training epochs
-n_ep = 1
+n_ep = 15
 
 # output lists
 score_train = np.zeros((kf, n_ep))
@@ -65,6 +64,7 @@ intercepts = []
 # compute train and test counts
 binsize = 0.0001
 
+print(f"before epoch 0: {datetime.now().time()}")
 for k, test_int in enumerate(tests):
     #count_test = spike_times_quiet.count(binsize, ep=test_int)
 
@@ -88,55 +88,54 @@ for k, test_int in enumerate(tests):
                 break
 
         start = end
-        print(f"before computing batches counts: {datetime.now().time()}")
+        #print(f"before computing batches counts: {datetime.now().time()}")
         X_counts = spike_times_quiet.count(binsize, ep=ep)
-        print(f"after computing batched X counts: {datetime.now().time()}")
+        #print(f"after computing batched X counts: {datetime.now().time()}")
         Y_counts = spike_times_quiet[int(args.Neuron)].count(binsize, ep=ep)
-        print(f"after computing batched Y counts: {datetime.now().time()}")
+        #print(f"after computing batched Y counts: {datetime.now().time()}")
         X = basis.compute_features(X_counts)
-        print(f"after convolution: {datetime.now().time()}")
+        #print(f"after convolution: {datetime.now().time()}")
         return X, Y_counts.squeeze(), start
 
     # define and initialize model
     model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
         solver_name="GradientDescent", solver_kwargs={"stepsize": 0.2, "acceleration": False}))
     start = train_int.start[0]
-    print(f"before model init: {datetime.now().time()}")
+    #print(f"before model init: {datetime.now().time()}")
     params, state = model.initialize_solver(*batcher(start))
-    print(f"after model init: {datetime.now().time()}")
+    #print(f"after model init: {datetime.now().time()}")
 
     # train model
     for ep in range(n_ep):
         start = train_int.start[0]
         # for i in range(n_bat):
-        for i in range(10):
+        for i in range(n_bat):
             # Get a batch of data
             X, Y, start = batcher(start)
 
             # Do one step of gradient descent.
-            print(f"before model step: {datetime.now().time()}")
+            #print(f"before model step: {datetime.now().time()}")
             params, state = model.update(params, state, X, Y)
-            print(f"after model step: {datetime.now().time()}")
+            #print(f"after model step: {datetime.now().time()}")
             print(i,"-------------------------")
 
         # Score the model along the time axis
-        print(f"before computing score: {datetime.now().time()}")
+        #print(f"before computing score: {datetime.now().time()}")
         score_train[k,ep] = model.score(X, Y, score_type="log-likelihood")
-        print(f"after computing score: {datetime.now().time()}")
+        #print(f"after computing score: {datetime.now().time()}")
         #score_test[k,ep] = model.score(X_test, count_test.squeeze(), score_type="log-likelihood")
-
+        print(f"epoch {ep}  compeleted: {datetime.now().time()}")
         print(f"K: {k}, Ep: {ep}, train ll: {score_train[k,ep]}, test ll: {score_test[k,ep]}")
 
-#     # model output
-#     weights.append(model.coef_.reshape(n_fun,-1))
-#     filters.append(np.matmul(basis_kernels, model.coef_.reshape(n_fun,-1)))
-#     print(np.shape(np.matmul(basis_kernels, model.coef_.reshape(n_fun,-1))))
-#     intercepts.append(model.intercept_)
-#
-# results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
-#                 "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
-#
-# np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_n{args.Neuron}.npy", results_dict)
+      # model output
+    weights.append(model.coef_.reshape(n_fun,-1))
+    filters.append(np.matmul(basis_kernels, model.coef_.reshape(n_fun,-1)))
+    intercepts.append(model.intercept_)
+
+results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
+                "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
+
+np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_n{args.Neuron}.npy", results_dict)
 
 
 
