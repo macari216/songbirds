@@ -7,6 +7,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-n", "--Neuron", help="Specify GLM input neuron (0-194)")
 args = parser.parse_args()
 
+nap.nap_config.set_backend("jax")
+
 print(f"before loading: {datetime.now().time()}")
 audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
 off_time = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57LightOffTime.mat')['c57LightOffTime']
