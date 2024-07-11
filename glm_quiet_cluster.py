@@ -52,7 +52,7 @@ time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
 time *= hist_window_sec
 
 #training epochs
-n_ep = 15
+n_ep = 30
 
 # output lists
 score_train = np.zeros((kf, n_ep))
@@ -117,7 +117,6 @@ for k, test_int in enumerate(tests):
             #print(f"before model step: {datetime.now().time()}")
             params, state = model.update(params, state, X, Y)
             #print(f"after model step: {datetime.now().time()}")
-            print(i,"-------------------------")
 
         # Score the model along the time axis
         #print(f"before computing score: {datetime.now().time()}")
