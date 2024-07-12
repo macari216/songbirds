@@ -39,7 +39,6 @@ spike_times_quiet["EI"] = ei_labels
 shutdown_flag = threading.Event()
 
 def prepare_batch(start, train_int):
-    print(start)
     end = start + batch_size
     ep = nap.IntervalSet(start, end)
 
@@ -100,16 +99,19 @@ def model_update(batch_queue, shutdown_flag, max_iterations, params, state):
     iteration = 0
     while iteration < max_iterations and not shutdown_flag.is_set():
         try:
-            print(f"before model update (1 batch): {datetime.now().time()}")
+            print(f"before loading batch: {datetime.now().time()}")
             batch = batch_queue.get(timeout=1)
+            print(f"after loading batch: {datetime.now().time()}")
             X, Y = batch
+            print(f"after assigning X and Y: {datetime.now().time()}")
 
             params, state = model.update(params, state, X, Y)
+            print(f"after model step: {datetime.now().time()}")
             score_train[k, ep] = model.score(X, Y, score_type="log-likelihood")
+            print(f"after computing score: {datetime.now().time()}")
             # score_test[k, ep] =
 
             batch_queue.task_done()
-            print(f"after model update (1 batch): {datetime.now().time()}")
             iteration += 1
         except queue.Empty:
             continue
@@ -141,8 +143,9 @@ for k, test_int in enumerate(tests):
     # train model
     for ep in range(n_ep):
         start = train_int.start[0]
+        shutdown_flag.clear()
         # start the batch loader thread
-        print(f"before starting batch thread: {datetime.now().time()}")
+        print(f"before starting batch thread: {start} start, {datetime.now().time()}")
         loader_thread = threading.Thread(target=batch_loader,
                                          args=(batch_queue, batch_qsize, shutdown_flag, start, train_int))
         loader_thread.daemon = True  # This makes the batch loader a daemon thread
@@ -151,7 +154,7 @@ for k, test_int in enumerate(tests):
         # update model
         try:
             print(f"before model update (full ep): {datetime.now().time()}")
-            model_update(batch_queue, shutdown_flag, 5, params, state)
+            model_update(batch_queue, shutdown_flag, n_bat, params, state)
             print(f"after model update (full ep): {datetime.now().time()}")
         finally:
             # set the shutdown flag to stop the loader thread
@@ -172,4 +175,4 @@ for k, test_int in enumerate(tests):
 results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
                 "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
 
-np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_n{args.Neuron}.npy", results_dict)
+# np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_n{args.Neuron}.npy", results_dict)
