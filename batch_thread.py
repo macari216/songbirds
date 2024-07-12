@@ -1,5 +1,3 @@
-# ADD X TEST
-
 import threading
 import queue
 from datetime import datetime
@@ -99,16 +97,11 @@ def model_update(batch_queue, shutdown_flag, max_iterations, params, state):
     iteration = 0
     while iteration < max_iterations and not shutdown_flag.is_set():
         try:
-            print(f"before loading batch: {datetime.now().time()}")
             batch = batch_queue.get(timeout=1)
-            print(f"after loading batch: {datetime.now().time()}")
             X, Y = batch
-            print(f"after assigning X and Y: {datetime.now().time()}")
 
             params, state = model.update(params, state, X, Y)
-            print(f"after model step: {datetime.now().time()}")
             score_train[k, ep] = model.score(X, Y, score_type="log-likelihood")
-            print(f"after computing score: {datetime.now().time()}")
             # score_test[k, ep] =
 
             batch_queue.task_done()
@@ -130,22 +123,18 @@ for k, test_int in enumerate(tests):
 
     batch_size = train_int.tot_length() / n_bat
 
-    print(f"before computing init X and Y: {datetime.now().time()}")
     init_ep = nap.IntervalSet(train_int.start[0], train_int.start[0]+batch_size)
     init_Y_counts = (spike_times_quiet[rec].count(binsize, ep=init_ep)).squeeze()
     init_X = basis.compute_features(spike_times_quiet.count(binsize, ep=init_ep))
-    print(f"after computing init X and Y: {datetime.now().time()}")
     model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
         solver_name="GradientDescent", solver_kwargs={"stepsize": 0.2, "acceleration": False}))
     params, state = model.initialize_solver(init_X, init_Y_counts)
-    print(f"after model init: {datetime.now().time()}")
 
     # train model
     for ep in range(n_ep):
         start = train_int.start[0]
         shutdown_flag.clear()
         # start the batch loader thread
-        print(f"before starting batch thread: {start} start, {datetime.now().time()}")
         loader_thread = threading.Thread(target=batch_loader,
                                          args=(batch_queue, batch_qsize, shutdown_flag, start, train_int))
         loader_thread.daemon = True  # This makes the batch loader a daemon thread
@@ -153,9 +142,7 @@ for k, test_int in enumerate(tests):
 
         # update model
         try:
-            print(f"before model update (full ep): {datetime.now().time()}")
             model_update(batch_queue, shutdown_flag, n_bat, params, state)
-            print(f"after model update (full ep): {datetime.now().time()}")
         finally:
             # set the shutdown flag to stop the loader thread
             shutdown_flag.set()
