@@ -83,7 +83,7 @@ batch_queue = queue.Queue(maxsize=batch_qsize)
 # parameters
 kf = 1
 n_ep = 1
-n_bat = 30
+n_bat = 1000
 binsize = 0.0001
 
 # create time intervals for CV
@@ -121,7 +121,7 @@ def model_update(batch_queue, shutdown_flag, max_iterations, params, state):
             params, state = model.update(params, state, X, Y)
             score_train[k, ep] = state._error
             tm1 = perf_counter()
-            print(f"model step (thread 0): tm1-tm0")
+            print(f"model step (thread 0): {tm1 - tm0}")
             # score_train[k, ep] = model.score(X, Y, score_type="log-likelihood")
             # score_test[k, ep] =
 
@@ -139,7 +139,6 @@ weights = []
 filters = []
 intercepts = []
 
-print(f"before epoch 0: {perf_counter()}")
 for k, test_int in enumerate(tests):
     train_int = time_on.set_diff(test_int)
 
@@ -157,6 +156,7 @@ for k, test_int in enumerate(tests):
 
     # train model
     for ep in range(n_ep):
+        tep0 = perf_counter()
         start = train_int.start[0]
         shutdown_flag.clear()
         # start the batch loader thread
@@ -168,7 +168,7 @@ for k, test_int in enumerate(tests):
 
         # update model
         try:
-            model_update(batch_queue, shutdown_flag, n_bat, params, state)
+            model_update(batch_queue, shutdown_flag, 30, params, state)
         finally:
             # set the shutdown flag to stop the loader thread
             shutdown_flag.set()
@@ -176,7 +176,8 @@ for k, test_int in enumerate(tests):
             loader_thread.join()
 
         # log score
-        print(f"epoch {ep}  completed: {perf_counter()}")
+        tep1 = perf_counter()
+        print(f"epoch {ep}  completed: {tep1-tep0}")
         print(f"K: {k}, Ep: {ep}, train ll: {score_train[k, ep]}, test ll: {score_test[k, ep]}")
 
     # save model parameters
