@@ -6,7 +6,8 @@ import scipy.io as sio
 import pynapple as nap
 import nemos as nmo
 import argparse
-#import psutil
+import psutil
+import os
 
 nap.nap_config.suppress_conversion_warnings = True
 
@@ -43,6 +44,10 @@ print(f"created TsGroup (thread 0): {t1-t0}")
 # set shutdown flag for batch thread
 shutdown_flag = threading.Event()
 
+def set_thread_affinity(core_id):
+    psutil.Process(os.getpid()).cpu_affinity([core_id])
+    print(f"Thread {threading.current_thread().name} running on core(s): {psutil.Process(os.getpid()).cpu_affinity()}")
+
 def prepare_batch(start, train_int):
     end = start + batch_size
     ep = nap.IntervalSet(start, end)
@@ -59,14 +64,15 @@ def prepare_batch(start, train_int):
     X_counts = spike_times_quiet.count(binsize, ep=ep)
     Y_counts = spike_times_quiet[rec].count(binsize, ep=ep)
     t_xy1 = perf_counter()
-    print(f"computed counts (thread 1): {t_xy1-t_xy0}")
+    #print(f"computed counts (thread 1): {t_xy1-t_xy0}")
     t_xy0 = perf_counter()
     X = basis.compute_features(X_counts)
     t_xy1 = perf_counter()
-    print(f"convolved counts (thread 1): {t_xy1 - t_xy0}")
+    #print(f"convolved counts (thread 1): {t_xy1 - t_xy0}")
     return (X, Y_counts.squeeze()), start
 
-def batch_loader(batch_queue, batch_qsize, shutdown_flag, start, train_int):
+def batch_loader(batch_queue, batch_qsize, shutdown_flag, start, train_int, core_id):
+    set_thread_affinity(core_id)
     while not shutdown_flag.is_set():
         if batch_queue.qsize() < batch_qsize:
             tb0 = perf_counter()
@@ -109,7 +115,8 @@ time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
 time *= hist_window_sec
 
 # MODEL STEP (1 epoch)
-def model_update(batch_queue, shutdown_flag, max_iterations, params, state):
+def model_update(batch_queue, shutdown_flag, max_iterations, params, state, core_id):
+    set_thread_affinity(core_id)
     iteration = 0
     while iteration < max_iterations and not shutdown_flag.is_set():
         try:
@@ -147,6 +154,18 @@ for k, test_int in enumerate(tests):
 
     batch_size = train_int.tot_length() / n_bat
 
+    start = train_int.start[0]
+
+    # start the batch loader threads
+    loader_threads = []
+    n_lthreads = 3
+    for i in range(n_lthreads):
+        loader_thread = threading.Thread(target=batch_loader,
+                                         args=(batch_queue, batch_qsize, shutdown_flag, start, train_int, i))
+        loader_thread.daemon = True  # This makes the batch loader a daemon thread
+        loader_threads.append(loader_thread)
+        loader_thread.start()
+
     tinit0 = perf_counter()
     init_ep = nap.IntervalSet(train_int.start[0], train_int.start[0]+batch_size)
     init_Y_counts = (spike_times_quiet[rec].count(binsize, ep=init_ep)).squeeze()
@@ -162,21 +181,16 @@ for k, test_int in enumerate(tests):
         tep0 = perf_counter()
         start = train_int.start[0]
         shutdown_flag.clear()
-        # start the batch loader thread
-        loader_thread = threading.Thread(target=batch_loader,
-                                         args=(batch_queue, batch_qsize, shutdown_flag, start, train_int))
-        loader_thread.daemon = True  # This makes the batch loader a daemon thread
-        loader_thread.start()
-        print(f"started loader thread: {perf_counter()}")
 
         # update model
         try:
-            model_update(batch_queue, shutdown_flag, 30, params, state)
+            model_update(batch_queue, shutdown_flag, 30, params, state, n_lthreads)
         finally:
             # set the shutdown flag to stop the loader thread
             shutdown_flag.set()
             # wait for the loader thread to exit
-            loader_thread.join()
+            for loader_thread in loader_threads:
+                loader_thread.join()
 
         # log score
         tep1 = perf_counter()
