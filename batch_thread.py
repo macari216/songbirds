@@ -198,9 +198,9 @@ for k, test_int in enumerate(tests):
         print(f"K: {k}, Ep: {ep}, train ll: {score_train[k, ep]}, test ll: {score_test[k, ep]}")
 
     # save model parameters
-    weights.append(model.coef_.reshape(n_fun,-1))
-    filters.append(np.matmul(basis_kernels, model.coef_.reshape(n_fun,-1)))
-    intercepts.append(model.intercept_)
+    # weights.append(model.coef_.reshape(n_fun,-1))
+    # filters.append(np.matmul(basis_kernels, model.coef_.reshape(n_fun,-1)))
+    # intercepts.append(model.intercept_)
 
 # SAVE RESULTS
 results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
