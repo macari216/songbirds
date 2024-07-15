@@ -1,11 +1,12 @@
 import threading
 import queue
-from datetime import datetime
+from time import perf_counter
 import numpy as np
 import scipy.io as sio
 import pynapple as nap
 import nemos as nmo
 import argparse
+#import psutil
 
 nap.nap_config.suppress_conversion_warnings = True
 
@@ -17,11 +18,15 @@ args = parser.parse_args()
 rec = int(args.Neuron)
 
 # load data
+t0 = perf_counter()
 audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
 off_time = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57LightOffTime.mat')['c57LightOffTime']
 spikes_quiet = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
 ei_labels = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57EI.mat')['c57EI']
+t1 = perf_counter()
+print(f"loaded data (thread 0): {t1-t0}")
 
+t0 = perf_counter()
 #convert times to Interval Sets and spikes to TsGroups
 audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
 
@@ -31,6 +36,8 @@ spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 
 # add E/I label
 spike_times_quiet["EI"] = ei_labels
+t1 = perf_counter()
+print(f"created TsGroup (thread 0): {t1-t0}")
 
 # PARALLELIZE BATCHING
 # set shutdown flag for batch thread
@@ -48,15 +55,24 @@ def prepare_batch(start, train_int):
             break
 
     start = end
+    t_xy0 = perf_counter()
     X_counts = spike_times_quiet.count(binsize, ep=ep)
     Y_counts = spike_times_quiet[rec].count(binsize, ep=ep)
+    t_xy1 = perf_counter()
+    print(f"computed counts (thread 1): {t_xy1-t_xy0}")
+    t_xy0 = perf_counter()
     X = basis.compute_features(X_counts)
+    t_xy1 = perf_counter()
+    print(f"convolved counts (thread 1): {t_xy1 - t_xy0}")
     return (X, Y_counts.squeeze()), start
 
 def batch_loader(batch_queue, batch_qsize, shutdown_flag, start, train_int):
     while not shutdown_flag.is_set():
         if batch_queue.qsize() < batch_qsize:
+            tb0 = perf_counter()
             batch, start = prepare_batch(start, train_int)
+            tb1 = perf_counter()
+            print(f"prepared batch (thread 0): {tb1-tb0}")
             batch_queue.put(batch)
 
 # parameters
@@ -66,8 +82,8 @@ batch_queue = queue.Queue(maxsize=batch_qsize)
 # SET UP MODEL
 # parameters
 kf = 1
-n_ep = 2
-n_bat = 1000
+n_ep = 1
+n_bat = 30
 binsize = 0.0001
 
 # create time intervals for CV
@@ -97,14 +113,20 @@ def model_update(batch_queue, shutdown_flag, max_iterations, params, state):
     iteration = 0
     while iteration < max_iterations and not shutdown_flag.is_set():
         try:
+            print(f"queue size (thread 0): {batch_queue.qsize()}")
             batch = batch_queue.get(timeout=1)
             X, Y = batch
 
+            tm0 = perf_counter()
             params, state = model.update(params, state, X, Y)
-            score_train[k, ep] = model.score(X, Y, score_type="log-likelihood")
+            score_train[k, ep] = state._error
+            tm1 = perf_counter()
+            print(f"model step (thread 0): tm1-tm0")
+            # score_train[k, ep] = model.score(X, Y, score_type="log-likelihood")
             # score_test[k, ep] =
 
             batch_queue.task_done()
+            print(f"end of iteration {iteration} -------------")
             iteration += 1
         except queue.Empty:
             continue
@@ -117,18 +139,21 @@ weights = []
 filters = []
 intercepts = []
 
-print(f"before epoch 0: {datetime.now().time()}")
+print(f"before epoch 0: {perf_counter()}")
 for k, test_int in enumerate(tests):
     train_int = time_on.set_diff(test_int)
 
     batch_size = train_int.tot_length() / n_bat
 
+    tinit0 = perf_counter()
     init_ep = nap.IntervalSet(train_int.start[0], train_int.start[0]+batch_size)
     init_Y_counts = (spike_times_quiet[rec].count(binsize, ep=init_ep)).squeeze()
     init_X = basis.compute_features(spike_times_quiet.count(binsize, ep=init_ep))
     model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
         solver_name="GradientDescent", solver_kwargs={"stepsize": 0.2, "acceleration": False}))
     params, state = model.initialize_solver(init_X, init_Y_counts)
+    tinit1 = perf_counter()
+    print(f"model initialization: {tinit1-tinit0}")
 
     # train model
     for ep in range(n_ep):
@@ -139,6 +164,7 @@ for k, test_int in enumerate(tests):
                                          args=(batch_queue, batch_qsize, shutdown_flag, start, train_int))
         loader_thread.daemon = True  # This makes the batch loader a daemon thread
         loader_thread.start()
+        print(f"started loader thread: {perf_counter()}")
 
         # update model
         try:
@@ -150,7 +176,7 @@ for k, test_int in enumerate(tests):
             loader_thread.join()
 
         # log score
-        print(f"epoch {ep}  compeleted: {datetime.now().time()}")
+        print(f"epoch {ep}  completed: {perf_counter()}")
         print(f"K: {k}, Ep: {ep}, train ll: {score_train[k, ep]}, test ll: {score_test[k, ep]}")
 
     # save model parameters
