@@ -48,6 +48,16 @@ def set_thread_affinity(core_id):
     psutil.Process(os.getpid()).cpu_affinity([core_id])
     print(f"Thread {threading.current_thread().name} running on core(s): {psutil.Process(os.getpid()).cpu_affinity()}")
 
+def get_allocated_cores():
+    allocated_cores = []
+    # Get the core IDs from the SLURM_CPUS_ON_NODE environment variable
+    cpus_on_node = os.getenv('SLURM_CPUS_ON_NODE')
+    if cpus_on_node:
+        allocated_cores = list(range(int(cpus_on_node)))
+    print(allocated_cores)
+
+get_allocated_cores()
+
 def prepare_batch(start, train_int):
     end = start + batch_size
     ep = nap.IntervalSet(start, end)
@@ -72,12 +82,12 @@ def prepare_batch(start, train_int):
     return (X, Y_counts.squeeze()), start
 
 def batch_loader(batch_queue, batch_qsize, shutdown_flag, start, train_int, core_id):
+    print(core_id)
     set_thread_affinity(core_id)
     while not shutdown_flag.is_set():
         if batch_queue.qsize() < batch_qsize:
-            tb0 = perf_counter()
+            print(f"add batch, {core_id}")
             batch, start = prepare_batch(start, train_int)
-            tb1 = perf_counter()
             batch_queue.put(batch)
 
 # parameters
@@ -115,10 +125,12 @@ time *= hist_window_sec
 
 # MODEL STEP (1 epoch)
 def model_update(batch_queue, shutdown_flag, max_iterations, params, state, core_id):
+    print(core_id)
     set_thread_affinity(core_id)
     iteration = 0
     while iteration < max_iterations and not shutdown_flag.is_set():
         try:
+            tmt0 = perf_counter()
             print(f"queue size (thread 0): {batch_queue.qsize()}")
             tm0 = perf_counter()
             batch = batch_queue.get(timeout=1)
@@ -128,17 +140,11 @@ def model_update(batch_queue, shutdown_flag, max_iterations, params, state, core
 
             tm0 = perf_counter()
             params, state = model.update(params, state, X, Y)
-            #score_train[k, ep] = state._error
             tm1 = perf_counter()
             print(f"model update: {tm1-tm0}")
-            tm0 = perf_counter()
-            score_train[k, ep] = model.score(X, Y, score_type="log-likelihood")
-            tm1 = perf_counter()
-            print(f"computed ll: {tm1-tm0}")
-            # score_test[k, ep] =
-
             batch_queue.task_done()
-            print(f"end of iteration {iteration} -------------")
+            tmt1 = perf_counter()
+            print(f"end of iteration {iteration}, total time: {tmt1-tmt0}  -------------")
             iteration += 1
         except queue.Empty:
             continue
@@ -190,12 +196,19 @@ for k, test_int in enumerate(tests):
         finally:
             # set the shutdown flag to stop the loader thread
             shutdown_flag.set()
+            print("shutdown flag set")
             # wait for the loader thread to exit
             for loader_thread in loader_threads:
                 loader_thread.join()
+            print("threads joined")
 
         # log score
-        tep1 = perf_counter()
+        tsc0 = perf_counter()
+        score_train[k, ep, iteration] = model.score(init_X, init_Y_counts, score_type="log-likelihood")
+        tsc1 = perf_counter()
+        print(f"computed ll: {tsc1-tsc0}")
+        # score_test[k, ep] =
+        tep1 = perf_counter(1)
         print(f"epoch {ep}  completed: {tep1-tep0}")
         print(f"K: {k}, Ep: {ep}, train ll: {score_train[k, ep]}, test ll: {score_test[k, ep]}")
 
