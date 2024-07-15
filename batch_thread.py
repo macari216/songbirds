@@ -158,8 +158,8 @@ for k, test_int in enumerate(tests):
 
     # start the batch loader threads
     loader_threads = []
-    n_lthreads = 3
-    for i in range(n_lthreads):
+    id_lthreads = [32,33,34]
+    for i in id_lthreads:
         loader_thread = threading.Thread(target=batch_loader,
                                          args=(batch_queue, batch_qsize, shutdown_flag, start, train_int, i))
         loader_thread.daemon = True  # This makes the batch loader a daemon thread
@@ -184,7 +184,7 @@ for k, test_int in enumerate(tests):
 
         # update model
         try:
-            model_update(batch_queue, shutdown_flag, 30, params, state, n_lthreads)
+            model_update(batch_queue, shutdown_flag, 30, params, state, 35)
         finally:
             # set the shutdown flag to stop the loader thread
             shutdown_flag.set()
