@@ -15,8 +15,11 @@ nap.nap_config.suppress_conversion_warnings = True
 # select row (post synaptic neuron)
 parser = argparse.ArgumentParser()
 parser.add_argument("-n", "--Neuron", help="Specify GLM receiver neuron (0-194)")
+parser.add_argument("-c", "--CoreID", help="Get cpu IDs assigned for the job")
 args = parser.parse_args()
 rec = int(args.Neuron)
+thread_ids = list(args.CoreID)
+print(type(thread_ids), thread_ids)
 
 # load data
 t0 = perf_counter()
@@ -158,8 +161,8 @@ for k, test_int in enumerate(tests):
 
     # start the batch loader threads
     loader_threads = []
-    id_lthreads = [32,33,34]
-    for i in id_lthreads:
+    n_lthreads = 3
+    for i in n_lthreads:
         loader_thread = threading.Thread(target=batch_loader,
                                          args=(batch_queue, batch_qsize, shutdown_flag, start, train_int, i))
         loader_thread.daemon = True  # This makes the batch loader a daemon thread
@@ -184,7 +187,7 @@ for k, test_int in enumerate(tests):
 
         # update model
         try:
-            model_update(batch_queue, shutdown_flag, 30, params, state, 35)
+            model_update(batch_queue, shutdown_flag, 30, params, state, n_lthreads)
         finally:
             # set the shutdown flag to stop the loader thread
             shutdown_flag.set()
