@@ -15,11 +15,8 @@ nap.nap_config.suppress_conversion_warnings = True
 # select row (post synaptic neuron)
 parser = argparse.ArgumentParser()
 parser.add_argument("-n", "--Neuron", help="Specify GLM receiver neuron (0-194)")
-parser.add_argument("-c", "--CoreID", help="Get cpu IDs assigned for the job")
 args = parser.parse_args()
 rec = int(args.Neuron)
-thread_ids = list(args.CoreID)
-print(type(thread_ids), thread_ids)
 
 # load data
 t0 = perf_counter()
@@ -81,11 +78,10 @@ def batch_loader(batch_queue, batch_qsize, shutdown_flag, start, train_int, core
             tb0 = perf_counter()
             batch, start = prepare_batch(start, train_int)
             tb1 = perf_counter()
-            print(f"prepared batch (thread 0): {tb1-tb0}")
             batch_queue.put(batch)
 
 # parameters
-batch_qsize = 10  # Number of pre-loaded batches
+batch_qsize = 5  # Number of pre-loaded batches
 batch_queue = queue.Queue(maxsize=batch_qsize)
 
 # SET UP MODEL
@@ -124,7 +120,10 @@ def model_update(batch_queue, shutdown_flag, max_iterations, params, state, core
     while iteration < max_iterations and not shutdown_flag.is_set():
         try:
             print(f"queue size (thread 0): {batch_queue.qsize()}")
+            tm0 = perf_counter()
             batch = batch_queue.get(timeout=1)
+            tm1 = perf_counter()
+            print(f"loaded batch (thread 0): {tm1-tm0}")
             X, Y = batch
 
             tm0 = perf_counter()
@@ -162,7 +161,7 @@ for k, test_int in enumerate(tests):
     # start the batch loader threads
     loader_threads = []
     n_lthreads = 3
-    for i in n_lthreads:
+    for i in range(n_lthreads):
         loader_thread = threading.Thread(target=batch_loader,
                                          args=(batch_queue, batch_qsize, shutdown_flag, start, train_int, i))
         loader_thread.daemon = True  # This makes the batch loader a daemon thread
