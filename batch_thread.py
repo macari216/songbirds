@@ -119,10 +119,13 @@ def model_update(batch_queue, shutdown_flag, max_iterations, params, state):
 
             tm0 = perf_counter()
             params, state = model.update(params, state, X, Y)
-            score_train[k, ep] = state._error
+            #score_train[k, ep] = state._error
             tm1 = perf_counter()
-            print(f"model step (thread 0): {tm1 - tm0}")
-            # score_train[k, ep] = model.score(X, Y, score_type="log-likelihood")
+            print(f"model update: {tm1-tm0}")
+            tm0 = perf_counter()
+            score_train[k, ep] = model.score(X, Y, score_type="log-likelihood")
+            tm1 = perf_counter()
+            print(f"computed ll: {tm1-tm0}")
             # score_test[k, ep] =
 
             batch_queue.task_done()
