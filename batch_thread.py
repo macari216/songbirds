@@ -1,5 +1,4 @@
-import threading
-import queue
+import multiprocessing as mp
 from time import perf_counter
 import numpy as np
 import scipy.io as sio
@@ -42,21 +41,11 @@ print(f"created TsGroup (thread 0): {t1-t0}")
 
 # PARALLELIZE BATCHING
 # set shutdown flag for batch thread
-shutdown_flag = threading.Event()
+shutdown_flag = mp.Event()
 
-def set_thread_affinity(core_id):
-    psutil.Process(os.getpid()).cpu_affinity([core_id])
-    print(f"Thread {threading.current_thread().name} running on core(s): {psutil.Process(os.getpid()).cpu_affinity()}")
-
-def get_allocated_cores():
-    allocated_cores = []
-    # Get the core IDs from the SLURM_CPUS_ON_NODE environment variable
-    cpus_on_node = os.getenv('SLURM_CPUS_ON_NODE')
-    if cpus_on_node:
-        allocated_cores = list(range(int(cpus_on_node)))
-    print(allocated_cores)
-
-get_allocated_cores()
+# def set_thread_affinity(core_id):
+#     psutil.Process(os.getpid()).cpu_affinity([core_id])
+#     print(f"Thread {threading.current_thread().name} running on core(s): {psutil.Process(os.getpid()).cpu_affinity()}")
 
 def prepare_batch(start, train_int):
     end = start + batch_size
@@ -73,23 +62,31 @@ def prepare_batch(start, train_int):
     X_counts = spike_times_quiet.count(binsize, ep=ep)
     Y_counts = spike_times_quiet[rec].count(binsize, ep=ep)
     X = basis.compute_features(X_counts)
-    return (X, Y_counts.squeeze()), start
+    return X, Y_counts.squeeze(), start
 
-def batch_loader(batch_queue, batch_qsize, shutdown_flag, start, train_int, core_id):
-    set_thread_affinity(core_id)
+def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, start, train_int, core_id, counter):
     while not shutdown_flag.is_set():
-        if batch_queue.qsize() < batch_qsize:
-            batch, start = prepare_batch(start, train_int)
-            batch_queue.put(batch)
+        X, Y, start = prepare_batch(start, train_int)
+
+        if queue_semaphore.acquire(timeout=1):
+            with counter.get_lock():
+                sequence_number = counter.value
+                counter.value += 1
+            batch_queue.put(sequence_number, X, Y)
+            print(f"Worker {os.getpid()} with ID {core_id} added batch {sequence_number}: {X.shape}, {Y.shape}, {start}")
+            server_semaphore.release()
+
 
 # parameters
-batch_qsize = 5  # Number of pre-loaded batches
-batch_queue = queue.Queue(maxsize=batch_qsize)
+batch_qsize = 3  # Number of pre-loaded batches
+batch_queue = mp.Queue(maxsize=batch_qsize)
+queue_semaphore = mp.Semaphore(batch_qsize)
+server_semaphore = mp.Semaphore(0)
 
 # SET UP MODEL
 # parameters
 kf = 1
-n_ep = 30
+n_ep = 2
 n_bat = 500
 binsize = 0.0001
 
@@ -116,26 +113,28 @@ time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
 time *= hist_window_sec
 
 # MODEL STEP (1 epoch)
-def model_update(batch_queue, shutdown_flag, max_iterations, params, state, core_id):
-    set_thread_affinity(core_id)
-    iteration = 0
-    while iteration < max_iterations and not shutdown_flag.is_set():
-        try:
-            tmt0 = perf_counter()
-            print(f"queue size (thread 0): {batch_queue.qsize()}")
-            batch = batch_queue.get(timeout=1)
-            X, Y = batch
+def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, max_iterations, params, state):
+    counter = 0
+    while counter < max_iterations and not shutdown_flag.is_set():
+        if server_semaphore.acquire(timeout=1):  # Wait for a signal from a worker
+            print(f"Server {os.getpid()} iter: {counter}")
+            try:
+                tmt0 = perf_counter()
+                print(f"queue size (thread 0): {batch_queue.qsize()}")
+                sequence_number, X, Y = batch_queue.get(timeout=1)
 
-            tm0 = perf_counter()
-            params, state = model.update(params, state, X, Y)
-            tm1 = perf_counter()
-            print(f"model update: {tm1-tm0}")
-            batch_queue.task_done()
-            tmt1 = perf_counter()
-            print(f"end of iteration {iteration}, total time: {tmt1-tmt0}  -------------")
-            iteration += 1
-        except queue.Empty:
-            continue
+                tm0 = perf_counter()
+                params, state = model.update(params, state, X, Y)
+                tm1 = perf_counter()
+                print(f"model update: {tm1-tm0}")
+                queue_semaphore.release()
+                tmt1 = perf_counter()
+                print(f"end of iteration {counter}, total time: {tmt1-tmt0}  -------------")
+                counter += 1
+            except batch_queue.Empty:
+                print("EMPTY")
+                pass
+    shutdown_flag.set()
 
 # PERFORM CROSS VALIDATION
 # output lists
@@ -152,15 +151,16 @@ for k, test_int in enumerate(tests):
 
     start = train_int.start[0]
 
+    counter = mp.Value('i', 0)
+
     # start the batch loader threads
-    loader_threads = []
-    n_lthreads = 9
-    for i in range(n_lthreads):
-        loader_thread = threading.Thread(target=batch_loader,
-                                         args=(batch_queue, batch_qsize, shutdown_flag, start, train_int, i))
-        loader_thread.daemon = True  # This makes the batch loader a daemon thread
-        loader_threads.append(loader_thread)
-        loader_thread.start()
+    processes = []
+    n_proc = 3
+    for id in range(n_proc):
+        p = mp.Process(target=batch_loader,
+                       args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, start, train_int, id, counter))
+        p.start()
+        processes.append(p)
 
     tinit0 = perf_counter()
     init_ep = nap.IntervalSet(train_int.start[0], train_int.start[0]+batch_size)
@@ -179,16 +179,15 @@ for k, test_int in enumerate(tests):
         shutdown_flag.clear()
 
         # update model
-        try:
-            model_update(batch_queue, shutdown_flag, n_bat, params, state, n_lthreads)
-        finally:
-            # set the shutdown flag to stop the loader thread
-            shutdown_flag.set()
-            print("shutdown flag set")
-            # wait for the loader thread to exit
-            for loader_thread in loader_threads:
-                loader_thread.join(1)
-            print("threads joined")
+        server_process = mp.Process(target=model_update,
+                                    args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, 30, params, state))
+        server_process.start()
+        server_process.join()  # Wait for the server process to finish
+
+        shutdown_flag.set()
+
+        for p in processes:
+            p.join()
 
         # log score
         tsc0 = perf_counter()
