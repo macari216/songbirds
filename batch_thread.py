@@ -9,7 +9,7 @@ import os
 
 nap.nap_config.suppress_conversion_warnings = True
 
-def prepare_batch(start, train_int):
+def prepare_batch(start, train_int, batch_size):
     end = start + batch_size
     ep = nap.IntervalSet(start, end)
 
@@ -26,11 +26,12 @@ def prepare_batch(start, train_int):
     X = basis.compute_features(X_counts)
     return X, Y_counts.squeeze(), start
 
-def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, start, train_int, core_id, counter):
+def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag,
+                 start, train_int, core_id, counter, batch_size):
     os.environ['JAX_PLATFORM_NAME'] = 'cpu'
     import jax
     while not shutdown_flag.is_set():
-        X, Y, start = prepare_batch(start, train_int)
+        X, Y, start = prepare_batch(start, train_int, batch_size)
 
         if queue_semaphore.acquire(timeout=1):
             with counter.get_lock():
@@ -153,7 +154,8 @@ if __name__ == "__main__":
         n_proc = 3
         for id in range(n_proc):
             p = mp.Process(target=batch_loader,
-                           args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, start, train_int, id, counter))
+                           args=(batch_queue, queue_semaphore, server_semaphore,
+                                 shutdown_flag, start, train_int, id, counter, batch_size))
             p.start()
             processes.append(p)
 
@@ -175,7 +177,8 @@ if __name__ == "__main__":
 
             # update model
             server_process = mp.Process(target=model_update,
-                                        args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, 30, params, state))
+                                        args=(batch_queue, queue_semaphore, server_semaphore,
+                                              shutdown_flag, 30, params, state))
             server_process.start()
             server_process.join()  # Wait for the server process to finish
 
