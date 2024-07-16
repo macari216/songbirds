@@ -1,7 +1,7 @@
 from datetime import datetime
 import numpy as np
 import scipy.io as sio
-import matplotlib.pyplot as plt
+from time import perf_counter
 import pynapple as nap
 import nemos as nmo
 import argparse
@@ -12,10 +12,13 @@ args = parser.parse_args()
 
 nap.nap_config.suppress_conversion_warnings = True
 
+tl0 = perf_counter()
 audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
 off_time = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57LightOffTime.mat')['c57LightOffTime']
 spikes_quiet = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
 ei_labels = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57EI.mat')['c57EI']
+tl1 = perf_counter()
+print(f"loaded data: {tl1-tl0}")
 
 #convert times to Interval Sets and spikes to TsGroups
 audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
@@ -77,6 +80,7 @@ for k, test_int in enumerate(tests):
     batch_size = train_int.tot_length() / n_bat
 
     def batcher(start):
+        tb0 = perf_counter()
         end = start + batch_size
         ep = nap.IntervalSet(start, end)
 
@@ -95,11 +99,13 @@ for k, test_int in enumerate(tests):
         #print(f"after computing batched Y counts: {datetime.now().time()}")
         X = basis.compute_features(X_counts)
         #print(f"after convolution: {datetime.now().time()}")
+        tb1 = perf_counter()
+        print(f"computed batch: {tb1-tb0}")
         return X, Y_counts.squeeze(), start
 
     # define and initialize model
     model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
-        solver_name="GradientDescent", solver_kwargs={"stepsize": 0.2, "acceleration": False}))
+        solver_name="GradientDescent", solver_kwargs={"stepsize": 0, "acceleration": False}))
     start = train_int.start[0]
     #print(f"before model init: {datetime.now().time()}")
     params, state = model.initialize_solver(*batcher(start))
@@ -107,6 +113,7 @@ for k, test_int in enumerate(tests):
 
     # train model
     for ep in range(n_ep):
+        tep0 = perf_counter()
         start = train_int.start[0]
         # for i in range(n_bat):
         for i in range(n_bat):
@@ -115,15 +122,18 @@ for k, test_int in enumerate(tests):
 
             # Do one step of gradient descent.
             #print(f"before model step: {datetime.now().time()}")
+            tm0 = perf_counter()
             params, state = model.update(params, state, X, Y)
-            #print(f"after model step: {datetime.now().time()}")
+            tm1 = perf_counter()
+            print(f"one model step: {tm1-tm0}")
 
         # Score the model along the time axis
         #print(f"before computing score: {datetime.now().time()}")
         score_train[k,ep] = model.score(X, Y, score_type="log-likelihood")
         #print(f"after computing score: {datetime.now().time()}")
         #score_test[k,ep] = model.score(X_test, count_test.squeeze(), score_type="log-likelihood")
-        print(f"epoch {ep}  compeleted: {datetime.now().time()}")
+        tep1 = perf_counter()
+        print(f"epoch {ep}  compeleted: {tep1-tep0}")
         print(f"K: {k}, Ep: {ep}, train ll: {score_train[k,ep]}, test ll: {score_test[k,ep]}")
 
       # model output
