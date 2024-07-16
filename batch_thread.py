@@ -65,6 +65,8 @@ def prepare_batch(start, train_int):
     return X, Y_counts.squeeze(), start
 
 def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, start, train_int, core_id, counter):
+    os.environ['JAX_PLATFORM_NAME'] = 'cpu'
+    import jax
     while not shutdown_flag.is_set():
         X, Y, start = prepare_batch(start, train_int)
 
@@ -114,6 +116,8 @@ time *= hist_window_sec
 
 # MODEL STEP (1 epoch)
 def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, max_iterations, params, state):
+    os.environ['JAX_PLATFORM_NAME'] = 'gpu'
+    import jax.numpy as jnp
     counter = 0
     while counter < max_iterations and not shutdown_flag.is_set():
         if server_semaphore.acquire(timeout=1):  # Wait for a signal from a worker
@@ -145,6 +149,8 @@ filters = []
 intercepts = []
 
 for k, test_int in enumerate(tests):
+    mp.set_start_method('spawn', force=True)
+
     train_int = time_on.set_diff(test_int)
 
     batch_size = train_int.tot_length() / n_bat
