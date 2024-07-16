@@ -70,19 +70,12 @@ def prepare_batch(start, train_int):
             break
 
     start = end
-    t_xy0 = perf_counter()
     X_counts = spike_times_quiet.count(binsize, ep=ep)
     Y_counts = spike_times_quiet[rec].count(binsize, ep=ep)
-    t_xy1 = perf_counter()
-    #print(f"computed counts (thread 1): {t_xy1-t_xy0}")
-    t_xy0 = perf_counter()
     X = basis.compute_features(X_counts)
-    t_xy1 = perf_counter()
-    #print(f"convolved counts (thread 1): {t_xy1 - t_xy0}")
     return (X, Y_counts.squeeze()), start
 
 def batch_loader(batch_queue, batch_qsize, shutdown_flag, start, train_int, core_id):
-    print(core_id)
     set_thread_affinity(core_id)
     while not shutdown_flag.is_set():
         if batch_queue.qsize() < batch_qsize:
@@ -98,7 +91,7 @@ batch_queue = queue.Queue(maxsize=batch_qsize)
 # parameters
 kf = 1
 n_ep = 1
-n_bat = 1000
+n_bat = 500
 binsize = 0.0001
 
 # create time intervals for CV
@@ -125,7 +118,6 @@ time *= hist_window_sec
 
 # MODEL STEP (1 epoch)
 def model_update(batch_queue, shutdown_flag, max_iterations, params, state, core_id):
-    print(core_id)
     set_thread_affinity(core_id)
     iteration = 0
     while iteration < max_iterations and not shutdown_flag.is_set():
@@ -166,7 +158,7 @@ for k, test_int in enumerate(tests):
 
     # start the batch loader threads
     loader_threads = []
-    n_lthreads = 3
+    n_lthreads = 9
     for i in range(n_lthreads):
         loader_thread = threading.Thread(target=batch_loader,
                                          args=(batch_queue, batch_qsize, shutdown_flag, start, train_int, i))
@@ -204,7 +196,7 @@ for k, test_int in enumerate(tests):
 
         # log score
         tsc0 = perf_counter()
-        score_train[k, ep, iteration] = model.score(init_X, init_Y_counts, score_type="log-likelihood")
+        score_train[k, ep] = model.score(init_X, init_Y_counts, score_type="log-likelihood")
         tsc1 = perf_counter()
         print(f"computed ll: {tsc1-tsc0}")
         # score_test[k, ep] =
