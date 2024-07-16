@@ -5,47 +5,9 @@ import scipy.io as sio
 import pynapple as nap
 import nemos as nmo
 import argparse
-import psutil
 import os
 
 nap.nap_config.suppress_conversion_warnings = True
-
-# PREPARE DATA
-# select row (post synaptic neuron)
-parser = argparse.ArgumentParser()
-parser.add_argument("-n", "--Neuron", help="Specify GLM receiver neuron (0-194)")
-args = parser.parse_args()
-rec = int(args.Neuron)
-
-# load data
-t0 = perf_counter()
-audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
-off_time = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57LightOffTime.mat')['c57LightOffTime']
-spikes_quiet = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
-ei_labels = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57EI.mat')['c57EI']
-t1 = perf_counter()
-print(f"loaded data (thread 0): {t1-t0}")
-
-t0 = perf_counter()
-#convert times to Interval Sets and spikes to TsGroups
-audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
-
-# create a TsGroup for spike times
-ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
-spike_times_quiet = nap.TsGroup(ts_dict_quiet)
-
-# add E/I label
-spike_times_quiet["EI"] = ei_labels
-t1 = perf_counter()
-print(f"created TsGroup (thread 0): {t1-t0}")
-
-# PARALLELIZE BATCHING
-# set shutdown flag for batch thread
-shutdown_flag = mp.Event()
-
-# def set_thread_affinity(core_id):
-#     psutil.Process(os.getpid()).cpu_affinity([core_id])
-#     print(f"Thread {threading.current_thread().name} running on core(s): {psutil.Process(os.getpid()).cpu_affinity()}")
 
 def prepare_batch(start, train_int):
     end = start + batch_size
@@ -78,43 +40,6 @@ def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, 
             print(f"Worker {os.getpid()} with ID {core_id} added batch {sequence_number}: {X.shape}, {Y.shape}, {start}")
             server_semaphore.release()
 
-
-# parameters
-batch_qsize = 3  # Number of pre-loaded batches
-batch_queue = mp.Queue(maxsize=batch_qsize)
-queue_semaphore = mp.Semaphore(batch_qsize)
-server_semaphore = mp.Semaphore(0)
-
-# SET UP MODEL
-# parameters
-kf = 1
-n_ep = 2
-n_bat = 500
-binsize = 0.0001
-
-# create time intervals for CV
-time_on = nap.IntervalSet(0, off_time).set_diff(audio_segm)
-tests = []
-t_st = 0
-one_int = off_time*0.2
-for i in range(kf):
-    t_end = t_st + one_int
-    test = nap.IntervalSet(t_st, t_end).set_diff(audio_segm)
-    tests.append(test)
-    t_st = t_end
-
-# choose spike history window
-hist_window_sec = 0.004
-mean_rate = 9999  # pre-computed, insignificant variance between batches
-hist_window_size = int(hist_window_sec * mean_rate)
-
-# define  basis
-n_fun = 9
-basis = nmo.basis.RaisedCosineBasisLog(n_fun, mode="conv", window_size=hist_window_size)
-time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
-time *= hist_window_sec
-
-# MODEL STEP (1 epoch)
 def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, max_iterations, params, state):
     os.environ['JAX_PLATFORM_NAME'] = 'gpu'
     import jax.numpy as jnp
@@ -140,78 +65,142 @@ def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, 
                 pass
     shutdown_flag.set()
 
-# PERFORM CROSS VALIDATION
-# output lists
-score_train = np.zeros((kf, n_ep))
-score_test = np.zeros((kf, n_ep))
-weights = []
-filters = []
-intercepts = []
 
-for k, test_int in enumerate(tests):
-    mp.set_start_method('spawn', force=True)
+if __name__ == "__main__":
+    mp.set_start_method('spawn', force=True)  # Use 'spawn' start method
 
-    train_int = time_on.set_diff(test_int)
+    # PREPARE DATA
+    # select row (post synaptic neuron)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-n", "--Neuron", help="Specify GLM receiver neuron (0-194)")
+    args = parser.parse_args()
+    rec = int(args.Neuron)
 
-    batch_size = train_int.tot_length() / n_bat
+    # load data
+    t0 = perf_counter()
+    audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
+    off_time = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57LightOffTime.mat')['c57LightOffTime']
+    spikes_quiet = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57SpikeTimesQuiet.mat')['c57SpikeTimesQuiet']
+    ei_labels = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57EI.mat')['c57EI']
+    t1 = perf_counter()
+    print(f"loaded data (thread 0): {t1-t0}")
 
-    start = train_int.start[0]
+    t0 = perf_counter()
+    #convert times to Interval Sets and spikes to TsGroups
+    audio_segm = nap.IntervalSet(start=audio_segm[:,0], end=audio_segm[:,1])
 
-    counter = mp.Value('i', 0)
+    # create a TsGroup for spike times
+    ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
+    spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 
-    # start the batch loader threads
-    processes = []
-    n_proc = 3
-    for id in range(n_proc):
-        p = mp.Process(target=batch_loader,
-                       args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, start, train_int, id, counter))
-        p.start()
-        processes.append(p)
+    print(f"created TsGroup (thread 0): {t1-t0}")
 
-    tinit0 = perf_counter()
-    init_ep = nap.IntervalSet(train_int.start[0], train_int.start[0]+batch_size)
-    init_Y_counts = (spike_times_quiet[rec].count(binsize, ep=init_ep)).squeeze()
-    init_X = basis.compute_features(spike_times_quiet.count(binsize, ep=init_ep))
-    model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
-        solver_name="GradientDescent", solver_kwargs={"stepsize": 0.4, "acceleration": False}))
-    params, state = model.initialize_solver(init_X, init_Y_counts)
-    tinit1 = perf_counter()
-    print(f"model initialization: {tinit1-tinit0}")
+    # set parameters
+    shutdown_flag = mp.Event()
+    batch_qsize = 3  # Number of pre-loaded batches
+    batch_queue = mp.Queue(maxsize=batch_qsize)
+    queue_semaphore = mp.Semaphore(batch_qsize)
+    server_semaphore = mp.Semaphore(0)
+    # model
+    kf = 1
+    n_ep = 2
+    n_bat = 500
+    binsize = 0.0001
 
-    # train model
-    for ep in range(n_ep):
-        tep0 = perf_counter()
+    # create time intervals for CV
+    time_on = nap.IntervalSet(0, off_time).set_diff(audio_segm)
+    tests = []
+    t_st = 0
+    one_int = off_time*0.2
+    for i in range(kf):
+        t_end = t_st + one_int
+        test = nap.IntervalSet(t_st, t_end).set_diff(audio_segm)
+        tests.append(test)
+        t_st = t_end
+
+    # choose spike history window
+    hist_window_sec = 0.004
+    mean_rate = 9999  # pre-computed, insignificant variance between batches
+    hist_window_size = int(hist_window_sec * mean_rate)
+
+    # define  basis
+    n_fun = 9
+    basis = nmo.basis.RaisedCosineBasisLog(n_fun, mode="conv", window_size=hist_window_size)
+    time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
+    time *= hist_window_sec
+
+    # PERFORM CROSS VALIDATION
+    # output lists
+    score_train = np.zeros((kf, n_ep))
+    score_test = np.zeros((kf, n_ep))
+    weights = []
+    filters = []
+    intercepts = []
+
+    for k, test_int in enumerate(tests):
+        mp.set_start_method('spawn', force=True)
+
+        train_int = time_on.set_diff(test_int)
+
+        batch_size = train_int.tot_length() / n_bat
+
         start = train_int.start[0]
-        shutdown_flag.clear()
 
-        # update model
-        server_process = mp.Process(target=model_update,
-                                    args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, 30, params, state))
-        server_process.start()
-        server_process.join()  # Wait for the server process to finish
+        counter = mp.Value('i', 0)
 
-        shutdown_flag.set()
+        # start the batch loader threads
+        processes = []
+        n_proc = 3
+        for id in range(n_proc):
+            p = mp.Process(target=batch_loader,
+                           args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, start, train_int, id, counter))
+            p.start()
+            processes.append(p)
 
-        for p in processes:
-            p.join()
+        tinit0 = perf_counter()
+        init_ep = nap.IntervalSet(train_int.start[0], train_int.start[0]+batch_size)
+        init_Y_counts = (spike_times_quiet[rec].count(binsize, ep=init_ep)).squeeze()
+        init_X = basis.compute_features(spike_times_quiet.count(binsize, ep=init_ep))
+        model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
+            solver_name="GradientDescent", solver_kwargs={"stepsize": 0.4, "acceleration": False}))
+        params, state = model.initialize_solver(init_X, init_Y_counts)
+        tinit1 = perf_counter()
+        print(f"model initialization: {tinit1-tinit0}")
 
-        # log score
-        tsc0 = perf_counter()
-        score_train[k, ep] = model.score(init_X, init_Y_counts, score_type="log-likelihood")
-        tsc1 = perf_counter()
-        print(f"computed ll: {tsc1-tsc0}")
-        # score_test[k, ep] =
-        tep1 = perf_counter()
-        print(f"epoch {ep}  completed: {tep1-tep0}")
-        print(f"K: {k}, Ep: {ep}, train ll: {score_train[k, ep]}, test ll: {score_test[k, ep]}")
+        # train model
+        for ep in range(n_ep):
+            tep0 = perf_counter()
+            start = train_int.start[0]
+            shutdown_flag.clear()
 
-    # save model parameters
-    # weights.append(model.coef_.reshape(n_fun,-1))
-    # filters.append(np.matmul(basis_kernels, model.coef_.reshape(n_fun,-1)))
-    # intercepts.append(model.intercept_)
+            # update model
+            server_process = mp.Process(target=model_update,
+                                        args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, 30, params, state))
+            server_process.start()
+            server_process.join()  # Wait for the server process to finish
 
-# SAVE RESULTS
-results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
-                "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
+            shutdown_flag.set()
 
-#np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_n{args.Neuron}.npy", results_dict)
+            for p in processes:
+                p.join()
+
+            # log score
+            tsc0 = perf_counter()
+            score_train[k, ep] = model.score(init_X, init_Y_counts, score_type="log-likelihood")
+            tsc1 = perf_counter()
+            print(f"computed ll: {tsc1-tsc0}")
+            # score_test[k, ep] =
+            tep1 = perf_counter()
+            print(f"epoch {ep}  completed: {tep1-tep0}")
+            print(f"K: {k}, Ep: {ep}, train ll: {score_train[k, ep]}, test ll: {score_test[k, ep]}")
+
+        # save model parameters
+        # weights.append(model.coef_.reshape(n_fun,-1))
+        # filters.append(np.matmul(basis_kernels, model.coef_.reshape(n_fun,-1)))
+        # intercepts.append(model.intercept_)
+
+    # SAVE RESULTS
+    results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
+                    "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
+
+    #np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_n{args.Neuron}.npy", results_dict)
