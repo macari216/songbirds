@@ -79,7 +79,6 @@ def batch_loader(batch_queue, batch_qsize, shutdown_flag, start, train_int, core
     set_thread_affinity(core_id)
     while not shutdown_flag.is_set():
         if batch_queue.qsize() < batch_qsize:
-            print(f"add batch, {core_id}")
             batch, start = prepare_batch(start, train_int)
             batch_queue.put(batch)
 
@@ -90,7 +89,7 @@ batch_queue = queue.Queue(maxsize=batch_qsize)
 # SET UP MODEL
 # parameters
 kf = 1
-n_ep = 1
+n_ep = 30
 n_bat = 500
 binsize = 0.0001
 
@@ -124,10 +123,7 @@ def model_update(batch_queue, shutdown_flag, max_iterations, params, state, core
         try:
             tmt0 = perf_counter()
             print(f"queue size (thread 0): {batch_queue.qsize()}")
-            tm0 = perf_counter()
             batch = batch_queue.get(timeout=1)
-            tm1 = perf_counter()
-            print(f"loaded batch (thread 0): {tm1-tm0}")
             X, Y = batch
 
             tm0 = perf_counter()
@@ -171,7 +167,7 @@ for k, test_int in enumerate(tests):
     init_Y_counts = (spike_times_quiet[rec].count(binsize, ep=init_ep)).squeeze()
     init_X = basis.compute_features(spike_times_quiet.count(binsize, ep=init_ep))
     model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
-        solver_name="GradientDescent", solver_kwargs={"stepsize": 0.2, "acceleration": False}))
+        solver_name="GradientDescent", solver_kwargs={"stepsize": 0.4, "acceleration": False}))
     params, state = model.initialize_solver(init_X, init_Y_counts)
     tinit1 = perf_counter()
     print(f"model initialization: {tinit1-tinit0}")
@@ -184,14 +180,14 @@ for k, test_int in enumerate(tests):
 
         # update model
         try:
-            model_update(batch_queue, shutdown_flag, 30, params, state, n_lthreads)
+            model_update(batch_queue, shutdown_flag, n_bat, params, state, n_lthreads)
         finally:
             # set the shutdown flag to stop the loader thread
             shutdown_flag.set()
             print("shutdown flag set")
             # wait for the loader thread to exit
             for loader_thread in loader_threads:
-                loader_thread.join()
+                loader_thread.join(1)
             print("threads joined")
 
         # log score
@@ -200,7 +196,7 @@ for k, test_int in enumerate(tests):
         tsc1 = perf_counter()
         print(f"computed ll: {tsc1-tsc0}")
         # score_test[k, ep] =
-        tep1 = perf_counter(1)
+        tep1 = perf_counter()
         print(f"epoch {ep}  completed: {tep1-tep0}")
         print(f"K: {k}, Ep: {ep}, train ll: {score_train[k, ep]}, test ll: {score_test[k, ep]}")
 
