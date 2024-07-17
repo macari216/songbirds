@@ -25,21 +25,21 @@ def prepare_batch(start, train_int, batch_size, spike_times, rec, basis):
     X_counts = spike_times.count(binsize, ep=ep)
     Y_counts = spike_times[rec].count(binsize, ep=ep)
     X = basis.compute_features(X_counts)
-    return X, Y_counts.squeeze(), start
+    return (X.d, (Y_counts.d).squeeze()), start
 
 def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag,
                  start, train_int, core_id, counter, batch_size, spike_times, rec, basis):
     os.environ['JAX_PLATFORM_NAME'] = 'cpu'
     import jax
     while not shutdown_flag.is_set():
-        X, Y, start = prepare_batch(start, train_int, batch_size, spike_times, rec, basis)
+        batch, start = prepare_batch(start, train_int, batch_size, spike_times, rec, basis)
 
         if queue_semaphore.acquire(timeout=1):
             with counter.get_lock():
                 sequence_number = counter.value
                 counter.value += 1
-            batch_queue.put(sequence_number, X, Y)
-            print(f"Worker {os.getpid()} with ID {core_id} added batch {sequence_number}: {X.shape}, {Y.shape}, {start}")
+            batch_queue.put(sequence_number, batch)
+            print(f"Worker {os.getpid()} with ID {core_id} added batch {sequence_number}: {start}")
             server_semaphore.release()
 
 def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, max_iterations, params, state):
@@ -52,7 +52,8 @@ def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, 
             try:
                 tmt0 = perf_counter()
                 print(f"queue size (thread 0): {batch_queue.qsize()}")
-                sequence_number, X, Y = batch_queue.get(timeout=1)
+                sequence_number, batch  = batch_queue.get(timeout=1)
+                X, Y = batch
 
                 tm0 = perf_counter()
                 params, state = model.update(params, state, X, Y)
