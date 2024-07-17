@@ -115,8 +115,9 @@ for k, test_int in enumerate(tests):
     for ep in range(n_ep):
         tep0 = perf_counter()
         start = train_int.start[0]
-        # for i in range(n_bat):
+
         for i in range(n_bat):
+            tmt0 = perf_counter()
             # Get a batch of data
             X, Y, start = batcher(start)
 
@@ -126,6 +127,7 @@ for k, test_int in enumerate(tests):
             params, state = model.update(params, state, X, Y)
             tm1 = perf_counter()
             print(f"one model step: {tm1-tm0}")
+            print(f"end of iteration {i}, total time: {tm1 - tmt0}  -------------")
 
         # Score the model along the time axis
         #print(f"before computing score: {datetime.now().time()}")
