@@ -9,7 +9,8 @@ import os
 
 nap.nap_config.suppress_conversion_warnings = True
 
-def prepare_batch(start, train_int, batch_size):
+def prepare_batch(start, train_int, batch_size, spike_times, rec):
+    binsize = 0.0001
     end = start + batch_size
     ep = nap.IntervalSet(start, end)
 
@@ -21,17 +22,17 @@ def prepare_batch(start, train_int, batch_size):
             break
 
     start = end
-    X_counts = spike_times_quiet.count(binsize, ep=ep)
-    Y_counts = spike_times_quiet[rec].count(binsize, ep=ep)
+    X_counts = spike_times.count(binsize, ep=ep)
+    Y_counts = spike_times[rec].count(binsize, ep=ep)
     X = basis.compute_features(X_counts)
     return X, Y_counts.squeeze(), start
 
 def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag,
-                 start, train_int, core_id, counter, batch_size):
+                 start, train_int, core_id, counter, batch_size, spike_times, rec):
     os.environ['JAX_PLATFORM_NAME'] = 'cpu'
     import jax
     while not shutdown_flag.is_set():
-        X, Y, start = prepare_batch(start, train_int, batch_size)
+        X, Y, start = prepare_batch(start, train_int, batch_size, spike_times, rec)
 
         if queue_semaphore.acquire(timeout=1):
             with counter.get_lock():
@@ -93,7 +94,7 @@ if __name__ == "__main__":
     # create a TsGroup for spike times
     ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
     spike_times_quiet = nap.TsGroup(ts_dict_quiet)
-
+    t1 = perf_counter()
     print(f"created TsGroup (thread 0): {t1-t0}")
 
     # set parameters
@@ -155,7 +156,7 @@ if __name__ == "__main__":
         for id in range(n_proc):
             p = mp.Process(target=batch_loader,
                            args=(batch_queue, queue_semaphore, server_semaphore,
-                                 shutdown_flag, start, train_int, id, counter, batch_size))
+                                 shutdown_flag, start, train_int, id, counter, batch_size, spike_times_quiet, rec))
             p.start()
             processes.append(p)
 
@@ -203,7 +204,7 @@ if __name__ == "__main__":
         # intercepts.append(model.intercept_)
 
     # SAVE RESULTS
-    results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
-                    "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
+    # results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
+    #                 "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
 
     #np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_n{args.Neuron}.npy", results_dict)
