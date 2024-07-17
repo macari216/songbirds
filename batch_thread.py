@@ -1,48 +1,42 @@
 import multiprocessing as mp
-from time import perf_counter
+from time import perf_counter, time
 import numpy as np
 import scipy.io as sio
 import pynapple as nap
 import nemos as nmo
 import argparse
 import os
+import random
 
 nap.nap_config.suppress_conversion_warnings = True
 
-def prepare_batch(start, train_int, batch_size, spike_times, rec, basis):
+def prepare_batch(batch_size, seed, starts, spike_times, rec, basis):
+    np.random.seed(seed)
     binsize = 0.0001
-    end = start + batch_size
-    ep = nap.IntervalSet(start, end)
-
-    while not train_int.intersect(ep):
-        start += batch_size
-        end += batch_size
-        ep = nap.IntervalSet(start, end)
-        if end > train_int.end[-1]:
-            break
-
-    start = end
+    start = random.choice(starts)
+    ep = nap.IntervalSet(start, start+batch_size)
     X_counts = spike_times.count(binsize, ep=ep)
     Y_counts = spike_times[rec].count(binsize, ep=ep)
     X = basis.compute_features(X_counts)
     return (X.d, (Y_counts.d).squeeze()), start
 
 def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag,
-                 start, train_int, core_id, counter, batch_size, spike_times, rec, basis):
+                 starts, seed, core_id, counter, batch_size, spike_times, rec, basis):
     os.environ['JAX_PLATFORM_NAME'] = 'cpu'
     import jax
+    print(f"Worker {core_id} with seed: {seed}")
     while not shutdown_flag.is_set():
-        batch, start = prepare_batch(start, train_int, batch_size, spike_times, rec, basis)
+        batch, start = prepare_batch(batch_size, seed, starts, spike_times, rec, basis)
 
         if queue_semaphore.acquire(timeout=1):
             with counter.get_lock():
                 sequence_number = counter.value
                 counter.value += 1
-            batch_queue.put(sequence_number, batch)
+            batch_queue.put((sequence_number, batch))
             print(f"Worker {os.getpid()} with ID {core_id} added batch {sequence_number}: {start}")
             server_semaphore.release()
 
-def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, max_iterations, params, state):
+def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, max_iterations, params, state, model):
     os.environ['JAX_PLATFORM_NAME'] = 'gpu'
     import jax.numpy as jnp
     counter = 0
@@ -111,15 +105,25 @@ if __name__ == "__main__":
     binsize = 0.0001
 
     # create time intervals for CV
-    time_on = nap.IntervalSet(0, off_time).set_diff(audio_segm)
-    tests = []
-    t_st = 0
-    one_int = off_time*0.2
-    for i in range(kf):
-        t_end = t_st + one_int
-        test = nap.IntervalSet(t_st, t_end).set_diff(audio_segm)
-        tests.append(test)
-        t_st = t_end
+    train_int = nap.IntervalSet(0, off_time*0.8).set_diff(audio_segm)
+    test_int = nap.IntervalSet(off_time * 0.8, off_time).set_diff(audio_segm)
+
+    batch_size = train_int.tot_length() / n_bat
+
+    starts = []
+    start = 0.0
+    for i in range(n_bat):
+        starts.append(start)
+        end = start + batch_size
+        ep = nap.IntervalSet(start, end)
+        while not train_int.intersect(ep):
+            start += batch_size
+            end += batch_size
+            ep = nap.IntervalSet(start, end)
+            if end > train_int.end[-1]:
+                break
+        else:
+            start += batch_size
 
     # choose spike history window
     hist_window_sec = 0.004
@@ -129,8 +133,8 @@ if __name__ == "__main__":
     # define  basis
     n_fun = 9
     basis = nmo.basis.RaisedCosineBasisLog(n_fun, mode="conv", window_size=hist_window_size)
-    time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
-    time *= hist_window_sec
+    b_time, basis_kernels = basis.evaluate_on_grid(hist_window_size)
+    b_time *= hist_window_sec
 
     # PERFORM CROSS VALIDATION
     # output lists
@@ -140,12 +144,8 @@ if __name__ == "__main__":
     filters = []
     intercepts = []
 
-    for k, test_int in enumerate(tests):
+    for k in range(kf):
         mp.set_start_method('spawn', force=True)
-
-        train_int = time_on.set_diff(test_int)
-
-        batch_size = train_int.tot_length() / n_bat
 
         start = train_int.start[0]
 
@@ -154,12 +154,14 @@ if __name__ == "__main__":
         # start the batch loader threads
         processes = []
         n_proc = 3
-        for id in range(n_proc):
+        for id in range(1, n_proc+1):
+            seed = ((id+k) * int(time())) % 123456789
             p = mp.Process(target=batch_loader,
-                           args=(batch_queue, queue_semaphore, server_semaphore,
-                                 shutdown_flag, start, train_int, id, counter, batch_size, spike_times_quiet, rec, basis))
+                           args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag,
+                                 starts, seed, id, counter, batch_size, spike_times_quiet, rec, basis))
             p.start()
             processes.append(p)
+
 
         tinit0 = perf_counter()
         init_ep = nap.IntervalSet(train_int.start[0], train_int.start[0]+batch_size)
@@ -180,7 +182,7 @@ if __name__ == "__main__":
             # update model
             server_process = mp.Process(target=model_update,
                                         args=(batch_queue, queue_semaphore, server_semaphore,
-                                              shutdown_flag, 30, params, state))
+                                              shutdown_flag, 30, params, state, model))
             server_process.start()
             server_process.join()  # Wait for the server process to finish
 
@@ -206,6 +208,6 @@ if __name__ == "__main__":
 
     # SAVE RESULTS
     # results_dict = {"weights": weights, "filters": filters, "intercept": intercepts, "type": spike_times_quiet["EI"],
-    #                 "time": time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
+    #                 "time": b_time, "basis_kernels": basis_kernels, "train_ll": score_train, "test_ll": score_test}
 
     #np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/results_n{args.Neuron}.npy", results_dict)
