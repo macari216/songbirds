@@ -9,7 +9,7 @@ import os
 
 nap.nap_config.suppress_conversion_warnings = True
 
-def prepare_batch(start, train_int, batch_size, spike_times, rec):
+def prepare_batch(start, train_int, batch_size, spike_times, rec, basis):
     binsize = 0.0001
     end = start + batch_size
     ep = nap.IntervalSet(start, end)
@@ -28,11 +28,11 @@ def prepare_batch(start, train_int, batch_size, spike_times, rec):
     return X, Y_counts.squeeze(), start
 
 def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag,
-                 start, train_int, core_id, counter, batch_size, spike_times, rec):
+                 start, train_int, core_id, counter, batch_size, spike_times, rec, basis):
     os.environ['JAX_PLATFORM_NAME'] = 'cpu'
     import jax
     while not shutdown_flag.is_set():
-        X, Y, start = prepare_batch(start, train_int, batch_size, spike_times, rec)
+        X, Y, start = prepare_batch(start, train_int, batch_size, spike_times, rec, basis)
 
         if queue_semaphore.acquire(timeout=1):
             with counter.get_lock():
@@ -156,7 +156,7 @@ if __name__ == "__main__":
         for id in range(n_proc):
             p = mp.Process(target=batch_loader,
                            args=(batch_queue, queue_semaphore, server_semaphore,
-                                 shutdown_flag, start, train_int, id, counter, batch_size, spike_times_quiet, rec))
+                                 shutdown_flag, start, train_int, id, counter, batch_size, spike_times_quiet, rec, basis))
             p.start()
             processes.append(p)
 
