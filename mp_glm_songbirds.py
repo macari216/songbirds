@@ -1,10 +1,8 @@
 import multiprocessing as mp
 from time import perf_counter, time
 import numpy as np
-import scipy.io as sio
 import pynapple as nap
 import nemos as nmo
-import argparse
 import os
 import random
 
@@ -12,7 +10,7 @@ nap.nap_config.suppress_conversion_warnings = True
 
 def prepare_batch(batch_size, seed, starts, spike_times, rec, basis):
     np.random.seed(seed)
-    binsize = 0.1
+    binsize = 0.01
     start = random.choice(starts)
     ep = nap.IntervalSet(start, start+batch_size)
     X_counts = spike_times.count(binsize, ep=ep)
