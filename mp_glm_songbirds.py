@@ -1,10 +1,8 @@
 import multiprocessing as mp
 from time import perf_counter, time
 import numpy as np
-import scipy.io as sio
 import pynapple as nap
 import nemos as nmo
-import argparse
 import os
 import random
 
