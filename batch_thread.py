@@ -13,6 +13,8 @@ nap.nap_config.suppress_conversion_warnings = True
 class Server:
     def __init__(self, batch_queue, queue_semaphore, server_semaphore, stop_event, num_iterations, shared_results):
         os.environ["JAX_PLATFORM_NAME"] = "gpu"
+        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
         import nemos
         self.nemos = nemos
         self.model = nemos.glm.GLM(
@@ -42,6 +44,7 @@ class Server:
                     # grab the batch (we are not using the seq number)
                     # at timeout it raises an exception
                     tb0 = perf_counter()
+                    print(f"queue size: {batch_queue.qsize()}")
                     sequence_number, batch = self.batch_queue.get(timeout=1)
                     tb1 = perf_counter()
                     print(f"aqcuired batch from queue, time: {tb1-tb0}")
