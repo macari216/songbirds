@@ -41,7 +41,10 @@ class Server:
                     tm0 = perf_counter()
                     # grab the batch (we are not using the seq number)
                     # at timeout it raises an exception
+                    tb0 = perf_counter()
                     sequence_number, batch = self.batch_queue.get(timeout=1)
+                    tb1 = perf_counter()
+                    print(f"aqcuired batch from queue, time: {tb1-tb0}")
                     # initialize at first iteration
                     if counter == 0:
                         params, state = self.model.initialize_solver(*batch)
