@@ -44,7 +44,7 @@ class Server:
                     # grab the batch (we are not using the seq number)
                     # at timeout it raises an exception
                     tb0 = perf_counter()
-                    print(f"queue size: {batch_queue.qsize()}")
+                    print(f"queue size: {self.batch_queue.qsize()}")
                     sequence_number, batch = self.batch_queue.get(timeout=1)
                     tb1 = perf_counter()
                     print(f"aqcuired batch from queue, time: {tb1-tb0}")
@@ -59,7 +59,7 @@ class Server:
                     print(f"model step {counter}, time: {tm1-tm0}")
                     counter += 1
 
-                    if counter%500==0:
+                    if counter%(num_iterations/10)==0:
                         tsc0 = perf_counter()
                         train_score = self.model.score(*batch, score_type="log-likelihood")
                         train_ll.append(train_score)
@@ -203,6 +203,7 @@ if __name__ == "__main__":
     # shared params
     manager = mp.Manager()
     shared_results = manager.dict()  # return the model to the main thread
+    print(type(shared_results))
 
     # get neuron id
     parser = argparse.ArgumentParser()
@@ -256,10 +257,12 @@ if __name__ == "__main__":
     server.start()
     server.join()
 
-    out = shared_results[0]
+    out = shared_results
     if out:
-        params, state = out
-        print("final params", params)
+        params = out["params"]
+        state = out["state"]
+        score_train = out["train_ll"]
+        print("final params", params.shape)
     else:
         print("no shared model in the list...")
 
@@ -267,9 +270,11 @@ if __name__ == "__main__":
     shutdown_flag.set()
     print("flag set")
 
+    # Save results
+    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_n{neuron_id}.npy", shared_results)
+
     # Release all semaphores to unblock workers if they are waiting
     for _ in range(num_workers):
-        print("releasing queue semaphore")
         queue_semaphore.release()
 
     # Join worker processes
