@@ -106,7 +106,7 @@ if __name__ == "__main__":
 
     # choose spike history window
     hist_window_sec = 0.4
-    mean_rate = np.mean(spike_times.rates)
+    mean_rate = np.mean(spike_times.rates) / binsize
     hist_window_size = int(hist_window_sec * mean_rate)
 
     # define  basis
