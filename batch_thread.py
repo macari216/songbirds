@@ -2,13 +2,13 @@ import multiprocessing as mp
 import os
 import random
 import argparse
+from time import perf_counter
 
 import numpy as np
 import scipy.io as sio
 import pynapple as nap
 
 nap.nap_config.suppress_conversion_warnings = True
-
 
 class Server:
     def __init__(self, batch_queue, queue_semaphore, server_semaphore, stop_event, num_iterations, shared_results):
@@ -32,28 +32,33 @@ class Server:
 
     def run(self):
         params, state = None, None
-        print("server run called...")
+        train_ll = []
         counter = 0
         while not self.stop_event.is_set() and counter < self.num_iterations:
             if self.server_semaphore.acquire(timeout=1):  # Wait for a signal from a worker
-                print("server semaphore acquired, a batch is in the queue...")
                 try:
 
+                    tm0 = perf_counter()
                     # grab the batch (we are not using the seq number)
                     # at timeout it raises an exception
                     sequence_number, batch = self.batch_queue.get(timeout=1)
-                    print("batch loaded...")
                     # initialize at first iteration
                     if counter == 0:
                         params, state = self.model.initialize_solver(*batch)
-                        print("initialized parameters...")
                     # update
                     params, state = self.model.update(params, state, *batch)
-                    print(f"update number {sequence_number} performed...")
 
                     self.queue_semaphore.release()  # Release semaphore after processing
-                    print("queue semaphore released, workers can compute a new batch...")
+                    tm1 = perf_counter()
+                    print(f"model step {counter}, time: {tm1-tm0}")
                     counter += 1
+
+                    if counter%500==0:
+                        tsc0 = perf_counter()
+                        train_score = self.model.score(*batch, score_type="log-likelihood")
+                        train_ll.append(train_score)
+                        tsc1 = perf_counter()
+                        print(f"train ll: {train_score}, time: {tsc1 - tsc0}")
 
                 except Exception as e:
                     print(f"Exception: {e}")
@@ -61,7 +66,9 @@ class Server:
         # stop workers
         self.stop_event.set()
         # add the model to the manager shared param
-        self.shared_results[:] = [(params, state)]
+        self.shared_results["params"] = params
+        self.shared_results["state"] = state
+        self.shared_results["train_ll"] = train_ll
         print("run returned for server")
 
 
@@ -73,9 +80,9 @@ class Worker:
                  time_quiet: nap.IntervalSet,
                  batch_size_sec: float,
                  n_batches: int,
-                 bin_size=0.001,
-                 n_basis_funcs=9,
-                 hist_window_sec=0.4,
+                 bin_size=None,
+                 n_basis_funcs=None,
+                 hist_window_sec=None,
                  batch_queue: mp.Queue = None,
                  queue_semaphore: mp.Semaphore = None,
                  server_semaphore: mp.Semaphore = None,
@@ -110,7 +117,6 @@ class Worker:
         self.spike_times = spike_times
         self.neuron_id = neuron_id
         self.starts = self.compute_starts(n_bat=n_batches, time_quiet=time_quiet)
-        print(f"worker {worker_id} stored model parameters...")
 
         # set worker based seed
         np.random.seed(123 + worker_id)
@@ -130,7 +136,6 @@ class Worker:
                     break
             else:
                 start += self.batch_size
-        print(f"{self.worker_id} computed starts: {starts}")
         return starts
 
     def configure_basis(self, n_basis_funcs):
@@ -196,7 +201,7 @@ if __name__ == "__main__":
 
     # shared params
     manager = mp.Manager()
-    shared_results = manager.list()  # return the model to the main thread
+    shared_results = manager.dict()  # return the model to the main thread
 
     # get neuron id
     parser = argparse.ArgumentParser()
