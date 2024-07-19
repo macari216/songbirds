@@ -159,18 +159,13 @@ class Worker:
             if compute_new_batch:
                 print(f"worker {self.worker_id} preparing a batch...")
                 batch = self.batcher()
-                print(f"worker {self.worker_id} batch ready...")
                 compute_new_batch = False
             if self.queue_semaphore.acquire(timeout=1):
-                print(f"worker {self.worker_id} acquired queue semaphore...")
                 with self.counter.get_lock():
                     sequence_number = self.counter.value
                     self.counter.value += 1
-                    print(f"worker {self.worker_id} incremented batch counter...")
                 self.batch_queue.put((sequence_number, batch))
-                print(f"worker {self.worker_id} added batch to the queue...")
                 self.server_semaphore.release()
-                print(f"worker {self.worker_id} released server semaphore...")
                 compute_new_batch = True
 
         print(f"worker {self.worker_id} exits loop...")
@@ -222,9 +217,9 @@ if __name__ == "__main__":
     time_quiet_test = nap.IntervalSet(off_time * 0.8, off_time).set_diff(audio_segm)
 
     # set the number of iteration and batches
-    n_batches = 1000
+    n_batches = 300
     batch_size_sec = time_quiet_train.tot_length() / n_batches
-    num_iterations = 10
+    num_iterations = 300
 
     # set up workers
     num_workers = 3
