@@ -22,6 +22,7 @@ def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag,
                  starts, seed, core_id, counter, batch_size, spike_times, rec, basis):
     os.environ['JAX_PLATFORM_NAME'] = 'cpu'
     import jax
+    import nemos as nmo
     print(f"Worker {core_id} with seed: {seed}")
     while not shutdown_flag.is_set():
         batch, start = prepare_batch(batch_size, seed, starts, spike_times, rec, basis)
@@ -34,10 +35,15 @@ def batch_loader(batch_queue, queue_semaphore, server_semaphore, shutdown_flag,
             print(f"Worker {os.getpid()} with ID {core_id} added batch {sequence_number}: {start}")
             server_semaphore.release()
 
-def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, max_iterations, params, state, model):
+def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, max_iterations, params, state, model,
+                 score_train, score_test, k):
     os.environ['JAX_PLATFORM_NAME'] = 'gpu'
     import jax.numpy as jnp
+    import nemos as nmo
+    score_train_pass = []
+    score_test_pass = []
     counter = 0
+    tep0 = perf_counter()
     while counter < max_iterations and not shutdown_flag.is_set():
         if server_semaphore.acquire(timeout=1):  # Wait for a signal from a worker
             print(f"Server {os.getpid()} iter: {counter}")
@@ -55,7 +61,19 @@ def model_update(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, 
                 tmt1 = perf_counter()
                 print(f"end of iteration {counter}, total time: {tmt1-tmt0}  -------------")
                 counter += 1
+
+                if counter%500==0:
+                    tsc0 = perf_counter()
+                    score_train_pass.append(model.score(X, Y, score_type="log-likelihood"))
+                    tsc1 = perf_counter()
+                    print(f"computed ll: {tsc1 - tsc0}")
+
+                    tep1 = perf_counter()
+                    print(f"pass {counter%500}  completed: {tep1 - tep0}, train_ll: {score_train[-1]}")
+                    tep0 = perf_counter()
+
             except batch_queue.Empty:
+                score_train[k,:] = score_train_pass
                 print("EMPTY")
                 pass
     shutdown_flag.set()
@@ -85,6 +103,8 @@ if __name__ == "__main__":
     kf = 1
     n_ep = 2
     n_bat = 10
+    n_passes = 10
+    max_iter = n_bat * n_passes
     binsize = 0.01
 
     batch_size = time_quiet.tot_length() / n_bat
@@ -106,7 +126,7 @@ if __name__ == "__main__":
 
     # choose spike history window
     hist_window_sec = 0.4
-    mean_rate = np.mean(spike_times.rates)
+    mean_rate = np.mean(spike_times.rates) / binsize
     hist_window_size = int(hist_window_sec * mean_rate)
 
     # define  basis
@@ -117,16 +137,14 @@ if __name__ == "__main__":
 
     # PERFORM CROSS VALIDATION
     # output lists
-    score_train = np.zeros((kf, n_ep))
-    score_test = np.zeros((kf, n_ep))
+    score_train = np.zeros((kf, n_passes))
+    score_test = np.zeros((kf, n_passes))
     weights = []
     filters = []
     intercepts = []
 
     for k in range(kf):
-        mp.set_start_method('spawn', force=True)
-
-        start = time_quiet.start[0]
+        shutdown_flag.clear()
 
         counter = mp.Value('i', 0)
 
@@ -143,7 +161,7 @@ if __name__ == "__main__":
 
 
         tinit0 = perf_counter()
-        init_ep = nap.IntervalSet(time_quiet.start[0], time_quiet.start[0]+batch_size)
+        init_ep = nap.IntervalSet(starts[0], starts[0]+batch_size)
         init_Y_counts = (spike_times[0].count(binsize, ep=init_ep)).squeeze()
         init_X = basis.compute_features(spike_times.count(binsize, ep=init_ep))
         model = nmo.glm.GLM(regularizer=nmo.regularizer.UnRegularized(
@@ -153,31 +171,17 @@ if __name__ == "__main__":
         print(f"model initialization: {tinit1-tinit0}")
 
         # train model
-        for ep in range(n_ep):
-            tep0 = perf_counter()
-            start = time_quiet.start[0]
-            shutdown_flag.clear()
+        server_process = mp.Process(target=model_update,
+                                    args=(batch_queue, queue_semaphore, server_semaphore,
+                                          shutdown_flag, max_iter, params, state, model,
+                                          score_train, score_test, k))
+        server_process.start()
+        server_process.join()  # Wait for the server process to finish
 
-            # update model
-            server_process = mp.Process(target=model_update,
-                                        args=(batch_queue, queue_semaphore, server_semaphore,
-                                              shutdown_flag, n_bat, params, state, model))
-            server_process.start()
-            server_process.join()  # Wait for the server process to finish
+        shutdown_flag.set()
 
-            shutdown_flag.set()
-
-            for p in processes:
-                p.join()
-
-            # log score
-            tsc0 = perf_counter()
-            score_train[k, ep] = model.score(init_X, init_Y_counts, score_type="log-likelihood")
-            tsc1 = perf_counter()
-            print(f"computed ll: {tsc1-tsc0}")
-            tep1 = perf_counter()
-            print(f"epoch {ep}  completed: {tep1-tep0}")
-            print(f"K: {k}, Ep: {ep}, train ll: {score_train[k, ep]}, test ll (omitted): {score_test[k, ep]}")
+        for p in processes:
+            p.join()
 
         # save model parameters
         weights.append(model.coef_.reshape(n_fun,-1))
