@@ -45,21 +45,22 @@ class Server:
                     # at timeout it raises an exception
                     tb0 = perf_counter()
                     print(f"queue size: {self.batch_queue.qsize()}")
+                    print(f"semaphore value: {self.server_semaphore._value}")
                     sequence_number, batch = self.batch_queue.get(timeout=1)
                     tb1 = perf_counter()
                     print(f"aqcuired batch from queue, time: {tb1-tb0}")
+                    self.queue_semaphore.release()  # Release semaphore after processing
                     # initialize at first iteration
                     if counter == 0:
                         params, state = self.model.initialize_solver(*batch)
                     # update
                     params, state = self.model.update(params, state, *batch)
 
-                    self.queue_semaphore.release()  # Release semaphore after processing
                     tm1 = perf_counter()
                     print(f"model step {counter}, time: {tm1-tm0}")
                     counter += 1
 
-                    if counter%(num_iterations/10)==0:
+                    if counter%(self.num_iterations/10)==0:
                         tsc0 = perf_counter()
                         train_score = self.model.score(*batch, score_type="log-likelihood")
                         train_ll.append(train_score)
@@ -172,6 +173,7 @@ class Worker:
                     self.counter.value += 1
                 self.batch_queue.put((sequence_number, batch))
                 self.server_semaphore.release()
+                print(f"worker {self.worker_id} released server semaphore, value: {self.server_semaphore._value}")
                 compute_new_batch = True
 
         print(f"worker {self.worker_id} exits loop...")
@@ -224,9 +226,9 @@ if __name__ == "__main__":
     time_quiet_test = nap.IntervalSet(off_time * 0.8, off_time).set_diff(audio_segm)
 
     # set the number of iteration and batches
-    n_batches = 300
+    n_batches = 1000
     batch_size_sec = time_quiet_train.tot_length() / n_batches
-    num_iterations = 300
+    num_iterations = 100
 
     # set up workers
     num_workers = 3
@@ -262,7 +264,7 @@ if __name__ == "__main__":
         params = out["params"]
         state = out["state"]
         score_train = out["train_ll"]
-        print("final params", params.shape)
+        print("final params", len(params))
     else:
         print("no shared model in the list...")
 
