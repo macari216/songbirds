@@ -200,17 +200,17 @@ if __name__ == "__main__":
     shared_results = manager.list()  # return the model to the main thread
 
     # generate some data
-    n_neurons = 5
-    n_sec = 1000.0
-    n_batches = 50
-    spikes = [np.random.uniform(0.0, n_sec, 200) for i in range(n_neurons)]
+    n_neurons = 195
+    n_sec = 8000.0
+    n_batches = 1000
+    spikes = [np.random.uniform(0.0, n_sec, 2000) for i in range(n_neurons)]
     spikes = np.array((spikes))
     ts_dict = {key: nap.Ts(spikes[key, :].flatten()) for key in range(spikes.shape[0])}
     spike_times = nap.TsGroup(ts_dict)
     neuron_id = 0  # id of neuron to fit
     batch_size_sec = n_sec/n_batches  # 1 sec batches
-    gap_starts = np.random.uniform(5, 95, 3)
-    gaps = nap.IntervalSet(gap_starts, gap_starts + 3)
+    gap_starts = np.random.uniform(5, 95, 10)
+    gaps = nap.IntervalSet(gap_starts, gap_starts + 6)
     time_quiet = spike_times.time_support.set_diff(gaps)
 
     # set the number of iteration
