@@ -11,24 +11,26 @@ import pynapple as nap
 nap.nap_config.suppress_conversion_warnings = True
 
 class Server:
-    def __init__(self, batch_queue, queue_semaphore, server_semaphore, stop_event, num_iterations, shared_results,
-                 n_basis_funcs=9, bin_size=None, hist_window_sec=None):
+    def __init__(self, conns, semaphore_dict, shared_arrays, stop_event, num_iterations, shared_results, array_shape,
+                 n_basis_funcs=9, bin_size=None, hist_window_sec=None, neuron_id=0):
         os.environ["JAX_PLATFORM_NAME"] = "gpu"
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
         import nemos
+        import jax
+        self.jax = jax
         self.nemos = nemos
         self.model = nemos.glm.GLM(
             regularizer=nemos.regularizer.UnRegularized(
                 solver_name="GradientDescent",
-                solver_kwargs={"stepsize": 0.2, "acceleration": False},
+                solver_kwargs={"stepsize": 0, "acceleration": False},
             )
         )
 
         # set mp attributes
+        self.conns = conns
+        self.semaphore_dict = semaphore_dict
         self.batch_queue = batch_queue
-        self.queue_semaphore = queue_semaphore
-        self.server_semaphore = server_semaphore
         self.stop_event = stop_event
         self.num_iterations = num_iterations
         self.shared_results = shared_results
@@ -37,47 +39,56 @@ class Server:
         self.basis = self.nemos.basis.RaisedCosineBasisLog(
             n_basis_funcs, mode="conv", window_size=self.hist_window_size
         )
+        self.array_shape = array_shape
+        self.neuron_id = neuron_id
+        self.shared_arrays = shared_arrays
+        print(f"ARRAY SHAPE {self.array_shape}")
 
     def run(self):
         params, state = None, None
         train_ll = []
         counter = 0
+        tep0 = perf_counter()
         while not self.stop_event.is_set() and counter < self.num_iterations:
-            if self.server_semaphore.acquire(timeout=1):  # Wait for a signal from a worker
+            if conn.poll(1):  # Wait for a signal from a worker
                 try:
+                    t0 = perf_counter()
+                    worker_id = conn.recv()
+                    print(f"control message worker {worker_id} loaded, time: {np.round(perf_counter() - t0, 5)}")
 
-                    tm0 = perf_counter()
-                    # grab the batch (we are not using the seq number)
-                    # at timeout it raises an exception
-                    print(f"queue size: {self.batch_queue.qsize()}")
-                    tb0 = perf_counter()
-                    sequence_number, batch = self.batch_queue.get(timeout=1)
-                    print(f"aqcuired batch from queue, time: {np.round(perf_counter() - tb0, 5)}")
-                    self.queue_semaphore.release()  # Release semaphore after processing
+                    t0 = perf_counter()
+                    x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
+                        self.array_shape)
+                    print(f"data loaded, time: {np.round(perf_counter() - t0, 5)}")
+
+                    self.semaphore_dict[worker_id].release() # Release semaphore after processing
 
                     #convolve x counts
-                    X_count, y = batch
-                    X = self.basis.compute_features(X_count.d)
+                    y = x_count[:, self.neuron_id]
+                    t0 = perf_counter()
+                    X = self.basis.compute_features(x_count)
+                    print(f"convolution performed, time: {np.round(perf_counter() - t0, 5)}")
 
                     # initialize at first iteration
                     if counter == 0:
-                        params, state = self.model.initialize_solver(*batch)
+                        params, state = self.model.initialize_solver(X.d,y)
                     # update
-                    params, state = self.model.update(params, state, *batch)
-
-                    tm1 = perf_counter()
-                    print(f"model step {counter}, time: {tm1-tm0}")
+                    t0 = perf_counter()
+                    params, state = self.model.update(params, state, X.d,y)
+                    print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}")
                     counter += 1
 
                     if counter%(self.num_iterations/10)==0:
-                        train_score = self.model.score(*batch, score_type="log-likelihood")
+                        train_score = self.model.score(X.d, y, score_type="log-likelihood")
                         train_ll.append(train_score)
                         print(f"train ll: {train_score}")
 
                 except Exception as e:
                     print(f"Exception: {e}")
                     pass
+
         # stop workers
+        print(f"all interations, time: {perf_counter() - tep0}")
         self.stop_event.set()
         # add the model to the manager shared param
         self.shared_results["params"] = params
@@ -87,101 +98,81 @@ class Server:
 
 
 class Worker:
-    def __init__(self,
-                 worker_id: int,
-                 neuron_id: int,
-                 spike_times: nap.TsGroup,
-                 time_quiet: nap.IntervalSet,
-                 batch_size_sec: float,
-                 n_batches: int,
-                 bin_size=None,
-                 n_basis_funcs=None,
-                 hist_window_sec=None,
-                 batch_queue: mp.Queue = None,
-                 queue_semaphore: mp.Semaphore = None,
-                 server_semaphore: mp.Semaphore = None,
-                 shutdown_flag: mp.Event = None,
-                 counter: mp.Value = None):
+    def __init__(self, conn, worker_id, spike_times, time_quiet, batch_size_sec, n_batches, shared_array, semaphore,
+                 bin_size=0.0001, hist_window_sec=0.004, shutdown_flag=None, n_seconds=None):
         """Store parameters and config jax"""
         os.environ["JAX_PLATFORM_NAME"] = "cpu"
         import nemos
         import jax
-
-        # import jax dependent libs
         self.nemos = nemos
         self.jax = jax
 
         # store worker info
+        self.conn = conn
         self.worker_id = worker_id
 
         # store multiprocessing attributes
-        self.batch_queue = batch_queue
-        self.queue_semaphore = queue_semaphore
-        self.server_semaphore = server_semaphore
         self.shutdown_flag = shutdown_flag
-        self.counter = counter
+        self.shared_array = shared_array
+        self.semaphore = semaphore
 
         # store model design hyperparameters
         self.bin_size = bin_size
         self.hist_window_size = int(hist_window_sec / bin_size)
-
         self.batch_size_sec = batch_size_sec
         self.batch_size = int(batch_size_sec / bin_size)
-        self.basis = self.configure_basis(n_basis_funcs)
         self.spike_times = spike_times
-        self.neuron_id = neuron_id
-        self.starts = self.compute_starts(n_bat=n_batches, time_quiet=time_quiet)
+        self.epochs = self.compute_starts(n_bat=n_batches, time_quiet=time_quiet, n_seconds=n_seconds)
 
         # set worker based seed
         np.random.seed(123 + worker_id)
 
-    def compute_starts(self, n_bat, time_quiet):
-        starts = []
-        start = 0.0
-        for _ in range(n_bat):
-            starts.append(start)
-            end = start + self.batch_size
-            ep = nap.IntervalSet(start, end)
-            while not time_quiet.intersect(ep):
-                start += self.batch_size
-                end += self.batch_size
-                ep = nap.IntervalSet(start, end)
-                if end > time_quiet.end[-1]:
-                    break
-            else:
-                start += self.batch_size
-        return starts
+    def compute_starts(self, n_bat, time_quiet, n_seconds):
+        iset_batches = []
+        cnt = 0
 
-    def configure_basis(self, n_basis_funcs):
-        """Define basis and other computations."""
-        basis = self.nemos.basis.RaisedCosineBasisLog(
-            n_basis_funcs, mode="conv", window_size=self.hist_window_size
-        )
-        return basis
+        while cnt < n_bat:
+            start = np.random.uniform(0, n_seconds-self.batch_size_sec)
+            end = start + self.batch_size_sec
+            ep = nap.IntervalSet(start, end).intersect(time_quiet)
+            delta_t = self.batch_size_sec - ep.tot_length()
+
+            while delta_t > 0:
+                end += delta_t
+                ep = nap.IntervalSet(start, end).intersect(time_quiet)
+                delta_t = self.batch_size_sec - ep.tot_length()
+
+            iset_batches.append(ep)
+            cnt += 1
+
+        return iset_batches
 
     def batcher(self):
-        start = random.choice(self.starts)
-        ep = nap.IntervalSet(start, start + self.batch_size_sec)
+        ep = self.epochs[np.random.choice(range(len(self.epochs)))]
         X_counts = self.spike_times.count(self.bin_size, ep=ep)
-        Y_counts = X_counts[:, self.neuron_id]
-        return (X_counts, (Y_counts.d).squeeze())
+        return np.asarray(X_counts.d, dtype=np.float32)
 
     def run(self):
-        compute_new_batch = True
-        while not self.shutdown_flag.is_set():
-            if compute_new_batch:
-                print(f"worker {self.worker_id} preparing a batch...")
-                batch = self.batcher()
-                compute_new_batch = False
-            if self.queue_semaphore.acquire(timeout=1):
-                with self.counter.get_lock():
-                    sequence_number = self.counter.value
-                    self.counter.value += 1
-                self.batch_queue.put((sequence_number, batch))
-                self.server_semaphore.release()
-                compute_new_batch = True
+        try:
+            while not self.shutdown_flag.is_set():
+                if not self.semaphore.acquire(timeout=1):
+                    continue
+                t0 = perf_counter()
+                x_count = self.batcher()
+                print(f"worker {self.worker_id} batch ready, time: {np.round(perf_counter() - t0, 5)}")
+                # Write data to shared memory using dedicated slice
+                t0 = perf_counter()
+                buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
+                np.copyto(buffer_array, x_count.flatten())
+                print(f"worker {self.worker_id} batch copied, time: {np.round(perf_counter() - t0, 5)}")
 
-        print(f"worker {self.worker_id} exits loop...")
+                self.conn.send(self.worker_id)
+                # # Wait for confirmation from server
+                # if not self.conn.recv():
+                #     print(f"worker {self.worker_id} retrying to send control message...")
+                #     continue
+        finally:
+            print(f"worker {self.worker_id} exits loop...")
 
 
 def worker_process(*args, **kwargs):
@@ -230,36 +221,66 @@ if __name__ == "__main__":
     time_quiet_test = nap.IntervalSet(off_time * 0.8, off_time).set_diff(audio_segm)
 
     # set the number of iteration and batches
-    n_batches = 1000
-    batch_size_sec = time_quiet_train.tot_length() / n_batches
-    num_iterations = 100
+    n_batches = 500
+    n_sec = time_quiet_train.tot_length()
+    batch_size_sec = n_sec / n_batches
+    num_iterations = 10
+    bin_size = 0.0001
+    hist_window_sec = 0.004
 
     # set up workers
     num_workers = 3
+
+    # shared arrays for data transfer
+    array_shape = (int(batch_size_sec / bin_size), len(ts_dict_quiet))  # Adjust to match actual data size
+    shared_arrays = {i: mp.Array('f', array_shape[0] * array_shape[1], lock=False) for i in range(num_workers)}
+
+    # set up pipes, semaphores, and workers
+    parent_conns, child_conns = zip(*[mp.Pipe() for _ in range(num_workers)])
+
+    semaphore_dict = {i: mp.Semaphore(1) for i in range(num_workers)}
     workers = []
-    for worker_id in range(1, num_workers + 1):
+
+    for i, conn in enumerate(child_conns):
         p = mp.Process(
             target=worker_process,
-            args=(worker_id, neuron_id, spike_times, time_quiet_train, batch_size_sec, n_batches),
+            args=(conn, i, spike_times, time_quiet_train, batch_size_sec, n_batches, shared_arrays[i], semaphore_dict[i]),
             kwargs=dict(
-                bin_size=0.0001,
-                n_basis_funcs=9,
-                hist_window_sec=0.004,
-                batch_queue=batch_queue,
-                queue_semaphore=queue_semaphore,
-                server_semaphore=server_semaphore,
+                bin_size=bin_size,
                 shutdown_flag=shutdown_flag,
-                counter=mp_counter
+                hist_window_sec=hist_window_sec,
+                n_seconds=n_sec
             )
         )
         p.start()
         workers.append(p)
-        print(f"Worker id {worker_id} pid = {p.pid}")
+        print(f"Worker id {i} pid = {p.pid}")
+
+
+
+    # for worker_id in range(1, num_workers + 1):
+    #     p = mp.Process(
+    #         target=worker_process,
+    #         args=(worker_id, neuron_id, spike_times, time_quiet_train, batch_size_sec, n_batches),
+    #         kwargs=dict(
+    #             bin_size=0.0001,
+    #             n_basis_funcs=9,
+    #             hist_window_sec=0.004,
+    #             batch_queue=batch_queue,
+    #             queue_semaphore=queue_semaphore,
+    #             server_semaphore=server_semaphore,
+    #             shutdown_flag=shutdown_flag,
+    #             counter=mp_counter
+    #         )
+    #     )
+    #     p.start()
+    #     workers.append(p)
+    #     print(f"Worker id {worker_id} pid = {p.pid}")
 
     server = mp.Process(
         target=server_process,
-        args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, num_iterations, shared_results),
-        kwargs=dict(n_basis_funcs=9, hist_window_sec=0.004, bin_size=0.0001)
+        args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape),
+        kwargs=dict(n_basis_funcs=9, hist_window_sec=hist_window_sec, bin_size=hist_window_sec, neuron_id=neuron_id)
     )
     server.start()
     server.join()
@@ -269,6 +290,7 @@ if __name__ == "__main__":
         params = out["params"]
         state = out["state"]
         score_train = out["train_ll"]
+        print(type(params[0]), type(params[1]), type(state), type(score_train))
         print("final params", len(params))
     else:
         print("no shared model in the list...")
