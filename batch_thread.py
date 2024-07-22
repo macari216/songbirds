@@ -49,42 +49,43 @@ class Server:
         counter = 0
         tep0 = perf_counter()
         while not self.stop_event.is_set() and counter < self.num_iterations:
-            if conn.poll(1):  # Wait for a signal from a worker
-                try:
-                    t0 = perf_counter()
-                    worker_id = conn.recv()
-                    print(f"control message worker {worker_id} loaded, time: {np.round(perf_counter() - t0, 5)}")
+            for conn in self.conns:
+                if conn.poll(1):  # Wait for a signal from a worker
+                    try:
+                        t0 = perf_counter()
+                        worker_id = conn.recv()
+                        print(f"control message worker {worker_id} loaded, time: {np.round(perf_counter() - t0, 5)}")
 
-                    t0 = perf_counter()
-                    x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
-                        self.array_shape)
-                    print(f"data loaded, time: {np.round(perf_counter() - t0, 5)}")
+                        t0 = perf_counter()
+                        x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
+                            self.array_shape)
+                        print(f"data loaded, time: {np.round(perf_counter() - t0, 5)}")
 
-                    self.semaphore_dict[worker_id].release() # Release semaphore after processing
+                        self.semaphore_dict[worker_id].release() # Release semaphore after processing
 
-                    #convolve x counts
-                    y = x_count[:, self.neuron_id]
-                    t0 = perf_counter()
-                    X = self.basis.compute_features(x_count)
-                    print(f"convolution performed, time: {np.round(perf_counter() - t0, 5)}")
+                        #convolve x counts
+                        y = x_count[:, self.neuron_id]
+                        t0 = perf_counter()
+                        X = self.basis.compute_features(x_count)
+                        print(f"convolution performed, time: {np.round(perf_counter() - t0, 5)}")
 
-                    # initialize at first iteration
-                    if counter == 0:
-                        params, state = self.model.initialize_solver(X.d,y)
-                    # update
-                    t0 = perf_counter()
-                    params, state = self.model.update(params, state, X.d,y)
-                    print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}")
-                    counter += 1
+                        # initialize at first iteration
+                        if counter == 0:
+                            params, state = self.model.initialize_solver(X.d,y)
+                        # update
+                        t0 = perf_counter()
+                        params, state = self.model.update(params, state, X.d,y)
+                        print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}")
+                        counter += 1
 
-                    if counter%(self.num_iterations/10)==0:
-                        train_score = self.model.score(X.d, y, score_type="log-likelihood")
-                        train_ll.append(train_score)
-                        print(f"train ll: {train_score}")
+                        if counter%(self.num_iterations/10)==0:
+                            train_score = self.model.score(X.d, y, score_type="log-likelihood")
+                            train_ll.append(train_score)
+                            print(f"train ll: {train_score}")
 
-                except Exception as e:
-                    print(f"Exception: {e}")
-                    pass
+                    except Exception as e:
+                        print(f"Exception: {e}")
+                        pass
 
         # stop workers
         print(f"all interations, time: {perf_counter() - tep0}")
