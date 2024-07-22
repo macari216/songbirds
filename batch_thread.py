@@ -49,42 +49,43 @@ class Server:
         counter = 0
         tep0 = perf_counter()
         while not self.stop_event.is_set() and counter < self.num_iterations:
-            if conn.poll(1):  # Wait for a signal from a worker
-                try:
-                    t0 = perf_counter()
-                    worker_id = conn.recv()
-                    print(f"control message worker {worker_id} loaded, time: {np.round(perf_counter() - t0, 5)}")
+            for conn in self.conns:
+                if conn.poll(1):  # Wait for a signal from a worker
+                    try:
+                        t0 = perf_counter()
+                        worker_id = conn.recv()
+                        print(f"control message worker {worker_id} loaded, time: {np.round(perf_counter() - t0, 5)}")
 
-                    t0 = perf_counter()
-                    x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
-                        self.array_shape)
-                    print(f"data loaded, time: {np.round(perf_counter() - t0, 5)}")
+                        t0 = perf_counter()
+                        x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
+                            self.array_shape)
+                        print(f"data loaded, time: {np.round(perf_counter() - t0, 5)}")
 
-                    self.semaphore_dict[worker_id].release() # Release semaphore after processing
+                        self.semaphore_dict[worker_id].release() # Release semaphore after processing
 
-                    #convolve x counts
-                    y = x_count[:, self.neuron_id]
-                    t0 = perf_counter()
-                    X = self.basis.compute_features(x_count)
-                    print(f"convolution performed, time: {np.round(perf_counter() - t0, 5)}")
+                        #convolve x counts
+                        y = x_count[:, self.neuron_id]
+                        t0 = perf_counter()
+                        X = self.basis.compute_features(x_count)
+                        print(f"convolution performed, time: {np.round(perf_counter() - t0, 5)}")
 
-                    # initialize at first iteration
-                    if counter == 0:
-                        params, state = self.model.initialize_solver(X.d,y)
-                    # update
-                    t0 = perf_counter()
-                    params, state = self.model.update(params, state, X.d,y)
-                    print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}")
-                    counter += 1
+                        # initialize at first iteration
+                        if counter == 0:
+                            params, state = self.model.initialize_solver(X.d,y)
+                        # update
+                        t0 = perf_counter()
+                        params, state = self.model.update(params, state, X.d,y)
+                        print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}")
+                        counter += 1
 
-                    if counter%(self.num_iterations/10)==0:
-                        train_score = self.model.score(X.d, y, score_type="log-likelihood")
-                        train_ll.append(train_score)
-                        print(f"train ll: {train_score}")
+                        if counter%(self.num_iterations/10)==0:
+                            train_score = self.model.score(X.d, y, score_type="log-likelihood")
+                            train_ll.append(train_score)
+                            print(f"train ll: {train_score}")
 
-                except Exception as e:
-                    print(f"Exception: {e}")
-                    pass
+                    except Exception as e:
+                        print(f"Exception: {e}")
+                        pass
 
         # stop workers
         print(f"all interations, time: {perf_counter() - tep0}")
@@ -121,35 +122,60 @@ class Worker:
         self.batch_size_sec = batch_size_sec
         self.batch_size = int(batch_size_sec / bin_size)
         self.spike_times = spike_times
-        self.epochs = self.compute_starts(n_bat=n_batches, time_quiet=time_quiet, n_seconds=n_seconds)
+        #self.epochs = self.compute_starts(n_bat=n_batches, time_quiet=time_quiet, n_seconds=n_seconds)
+        self.starts = self.compute_starts(n_bat=n_batches, time_quiet=time_quiet)
 
         # set worker based seed
         np.random.seed(123 + worker_id)
 
-    def compute_starts(self, n_bat, time_quiet, n_seconds):
-        iset_batches = []
-        cnt = 0
-        while cnt < n_bat:
-            start = np.random.uniform(0, n_seconds)
-            end = start + self.batch_size_sec
-            tot_time = nap.IntervalSet(end, n_seconds).intersect(time_quiet)
-            if tot_time.tot_length() < self.batch_size_sec:
-                continue
-            ep = nap.IntervalSet(start, end).intersect(time_quiet)
-            delta_t = self.batch_size_sec - ep.tot_length()
+    # def compute_starts(self, n_bat, time_quiet, n_seconds):
+    #     iset_batches = []
+    #     cnt = 0
+    #     while cnt < n_bat:
+    #         start = np.random.uniform(0, n_seconds)
+    #         end = start + self.batch_size_sec
+    #         tot_time = nap.IntervalSet(end, n_seconds).intersect(time_quiet)
+    #         if tot_time.tot_length() < self.batch_size_sec:
+    #             continue
+    #         ep = nap.IntervalSet(start, end).intersect(time_quiet)
+    #         delta_t = self.batch_size_sec - ep.tot_length()
+    #
+    #         while delta_t > 0:
+    #             end += delta_t
+    #             ep = nap.IntervalSet(start, end).intersect(time_quiet)
+    #             delta_t = self.batch_size_sec - ep.tot_length()
+    #
+    #         iset_batches.append(ep)
+    #         cnt += 1
+    #
+    #     return iset_batches
+    #
+    # def batcher(self):
+    #     ep = self.epochs[np.random.choice(range(len(self.epochs)))]
+    #     X_counts = self.spike_times.count(self.bin_size, ep=ep)
+    #     return np.asarray(X_counts.d, dtype=np.float32)
 
-            while delta_t > 0:
-                end += delta_t
-                ep = nap.IntervalSet(start, end).intersect(time_quiet)
-                delta_t = self.batch_size_sec - ep.tot_length()
-
-            iset_batches.append(ep)
-            cnt += 1
-
-        return iset_batches
+    def compute_starts(self, n_bat, time_quiet):
+        starts = []
+        start = 0.0
+        for _ in range(n_bat):
+            starts.append(start)
+            end = start + self.batch_size
+            ep = nap.IntervalSet(start, end)
+            while not time_quiet.intersect(ep):
+                start += self.batch_size
+                end += self.batch_size
+                ep = nap.IntervalSet(start, end)
+                if end > time_quiet.end[-1]:
+                    break
+            else:
+                start += self.batch_size
+        print(f"{self.worker_id} computed starts")
+        return starts
 
     def batcher(self):
-        ep = self.epochs[np.random.choice(range(len(self.epochs)))]
+        start = random.choice(self.starts)
+        ep = nap.IntervalSet(start, start + self.batch_size_sec)
         X_counts = self.spike_times.count(self.bin_size, ep=ep)
         return np.asarray(X_counts.d, dtype=np.float32)
 
