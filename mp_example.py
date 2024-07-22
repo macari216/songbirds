@@ -130,7 +130,7 @@ class Worker:
                     break
             else:
                 start += self.batch_size
-        print(f"{self.worker_id} computed starts: {starts}")
+        print(f"{self.worker_id} computed starts")
         return starts
 
     def configure_basis(self, n_basis_funcs):
