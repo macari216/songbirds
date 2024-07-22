@@ -259,6 +259,7 @@ if __name__ == "__main__":
     server = mp.Process(
         target=server_process,
         args=(batch_queue, queue_semaphore, server_semaphore, shutdown_flag, num_iterations, shared_results),
+        kwargs=dict(n_basis_funcs=9, hist_window_sec=0.004, bin_size=0.0001)
     )
     server.start()
     server.join()
