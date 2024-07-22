@@ -43,13 +43,12 @@ class Server:
                     tm0 = perf_counter()
                     # grab the batch (we are not using the seq number)
                     # at timeout it raises an exception
-                    tb0 = perf_counter()
                     print(f"queue size: {self.batch_queue.qsize()}")
-                    print(f"semaphore value: {self.server_semaphore._value}")
+                    tb0 = perf_counter()
                     sequence_number, batch = self.batch_queue.get(timeout=1)
-                    tb1 = perf_counter()
-                    print(f"aqcuired batch from queue, time: {tb1-tb0}")
+                    print(f"aqcuired batch from queue, time: {np.round(perf_counter() - tb0, 5)}")
                     self.queue_semaphore.release()  # Release semaphore after processing
+
                     # initialize at first iteration
                     if counter == 0:
                         params, state = self.model.initialize_solver(*batch)
@@ -61,11 +60,9 @@ class Server:
                     counter += 1
 
                     if counter%(self.num_iterations/10)==0:
-                        tsc0 = perf_counter()
                         train_score = self.model.score(*batch, score_type="log-likelihood")
                         train_ll.append(train_score)
-                        tsc1 = perf_counter()
-                        print(f"train ll: {train_score}, time: {tsc1 - tsc0}")
+                        print(f"train ll: {train_score}")
 
                 except Exception as e:
                     print(f"Exception: {e}")
@@ -173,7 +170,6 @@ class Worker:
                     self.counter.value += 1
                 self.batch_queue.put((sequence_number, batch))
                 self.server_semaphore.release()
-                print(f"worker {self.worker_id} released server semaphore, value: {self.server_semaphore._value}")
                 compute_new_batch = True
 
         print(f"worker {self.worker_id} exits loop...")
@@ -205,7 +201,6 @@ if __name__ == "__main__":
     # shared params
     manager = mp.Manager()
     shared_results = manager.dict()  # return the model to the main thread
-    print(type(shared_results))
 
     # get neuron id
     parser = argparse.ArgumentParser()
