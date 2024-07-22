@@ -11,7 +11,8 @@ import pynapple as nap
 nap.nap_config.suppress_conversion_warnings = True
 
 class Server:
-    def __init__(self, batch_queue, queue_semaphore, server_semaphore, stop_event, num_iterations, shared_results):
+    def __init__(self, batch_queue, queue_semaphore, server_semaphore, stop_event, num_iterations, shared_results,
+                 n_basis_funcs=9, bin_size=None, hist_window_sec=None):
         os.environ["JAX_PLATFORM_NAME"] = "gpu"
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
@@ -31,6 +32,11 @@ class Server:
         self.stop_event = stop_event
         self.num_iterations = num_iterations
         self.shared_results = shared_results
+        self.bin_size = bin_size
+        self.hist_window_size = int(hist_window_sec / bin_size)
+        self.basis = self.nemos.basis.RaisedCosineBasisLog(
+            n_basis_funcs, mode="conv", window_size=self.hist_window_size
+        )
 
     def run(self):
         params, state = None, None
@@ -48,6 +54,10 @@ class Server:
                     sequence_number, batch = self.batch_queue.get(timeout=1)
                     print(f"aqcuired batch from queue, time: {np.round(perf_counter() - tb0, 5)}")
                     self.queue_semaphore.release()  # Release semaphore after processing
+
+                    #convolve x counts
+                    X_count, y = batch
+                    X = self.basis.compute_features(X_count.d)
 
                     # initialize at first iteration
                     if counter == 0:
@@ -154,8 +164,7 @@ class Worker:
         ep = nap.IntervalSet(start, start + self.batch_size_sec)
         X_counts = self.spike_times.count(self.bin_size, ep=ep)
         Y_counts = X_counts[:, self.neuron_id]
-        X = self.basis.compute_features(X_counts)
-        return (X.d, (Y_counts.d).squeeze())
+        return (X_counts, (Y_counts.d).squeeze())
 
     def run(self):
         compute_new_batch = True
