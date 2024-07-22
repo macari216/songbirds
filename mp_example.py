@@ -1,8 +1,7 @@
 import multiprocessing as mp
 import os
 import random
-import psutil
-from time import sleep
+from time import perf_counter
 
 import numpy as np
 import pynapple as nap
@@ -41,8 +40,10 @@ class Server:
 
                     # grab the batch (we are not using the seq number)
                     # at timeout it raises an exception
+                    t0 = perf_counter()
                     sequence_number, batch = self.batch_queue.get(timeout=1)
-                    print("batch loaded...")
+                    print(f"batch loaded, time: {np.round(perf_counter()-t0, 5)}")
+                    self.queue_semaphore.release()  # Release semaphore after processing
                     # initialize at first iteration
                     if counter == 0:
                         params, state = self.model.initialize_solver(*batch)
@@ -51,7 +52,6 @@ class Server:
                     params, state = self.model.update(params, state, *batch)
                     print(f"update number {sequence_number} performed...")
 
-                    self.queue_semaphore.release()  # Release semaphore after processing
                     print("queue semaphore released, workers can compute a new batch...")
                     counter += 1
 
@@ -153,8 +153,9 @@ class Worker:
         while not self.shutdown_flag.is_set():
             if compute_new_batch:
                 print(f"worker {self.worker_id} preparing a batch...")
+                t0 = perf_counter()
                 batch = self.batcher()
-                print(f"worker {self.worker_id} batch ready...")
+                print(f"worker {self.worker_id} batch ready, time: {np.round(perf_counter() - t0, 5)}")
                 compute_new_batch = False
             if self.queue_semaphore.acquire(timeout=1):
                 print(f"worker {self.worker_id} acquired queue semaphore...")
@@ -200,20 +201,20 @@ if __name__ == "__main__":
 
     # generate some data
     n_neurons = 5
-    n_sec = 100.0
-    spikes = [np.random.uniform(0.0, n_sec, 20) for i in range(n_neurons)]
+    n_sec = 1000.0
+    n_batches = 50
+    spikes = [np.random.uniform(0.0, n_sec, 200) for i in range(n_neurons)]
     spikes = np.array((spikes))
     ts_dict = {key: nap.Ts(spikes[key, :].flatten()) for key in range(spikes.shape[0])}
     spike_times = nap.TsGroup(ts_dict)
     neuron_id = 0  # id of neuron to fit
-    batch_size_sec = 1.0  # 1 sec batches
+    batch_size_sec = n_sec/n_batches  # 1 sec batches
     gap_starts = np.random.uniform(5, 95, 3)
     gaps = nap.IntervalSet(gap_starts, gap_starts + 3)
     time_quiet = spike_times.time_support.set_diff(gaps)
 
-    # set the number of iteration and batches
-    num_iterations = 2
-    n_batches = 10
+    # set the number of iteration
+    num_iterations = 10
 
     # set up workers
     num_workers = 3
@@ -223,9 +224,9 @@ if __name__ == "__main__":
             target=worker_process,
             args=(worker_id, neuron_id, spike_times, time_quiet, batch_size_sec, n_batches),
             kwargs=dict(
-                bin_size=0.001,
+                bin_size=0.0001,
                 n_basis_funcs=9,
-                hist_window_sec=0.4,
+                hist_window_sec=0.004,
                 batch_queue=batch_queue,
                 queue_semaphore=queue_semaphore,
                 server_semaphore=server_semaphore,
