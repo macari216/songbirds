@@ -30,7 +30,6 @@ class Server:
         # set mp attributes
         self.conns = conns
         self.semaphore_dict = semaphore_dict
-        self.batch_queue = batch_queue
         self.stop_event = stop_event
         self.num_iterations = num_iterations
         self.shared_results = shared_results
@@ -130,10 +129,12 @@ class Worker:
     def compute_starts(self, n_bat, time_quiet, n_seconds):
         iset_batches = []
         cnt = 0
-
         while cnt < n_bat:
-            start = np.random.uniform(0, n_seconds-self.batch_size_sec)
+            start = np.random.uniform(0, n_seconds)
             end = start + self.batch_size_sec
+            tot_time = nap.IntervalSet(end, n_seconds).intersect(time_quiet)
+            if tot_time.tot_length() < self.batch_size_sec:
+                continue
             ep = nap.IntervalSet(start, end).intersect(time_quiet)
             delta_t = self.batch_size_sec - ep.tot_length()
 
