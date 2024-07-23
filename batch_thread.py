@@ -11,7 +11,7 @@ nap.nap_config.suppress_conversion_warnings = True
 
 class Server:
     def __init__(self, conns, semaphore_dict, shared_arrays, stop_event, num_iterations, shared_results, array_shape,
-                 n_basis_funcs=9, bin_size=None, hist_window_sec=None): # nstart=0, nend=1):
+                 reg_strength=0.001, n_basis_funcs=9, bin_size=None, hist_window_sec=None): # nstart=0, nend=1):
         os.environ["JAX_PLATFORM_NAME"] = "gpu"
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
@@ -22,7 +22,7 @@ class Server:
 
         # set mp attributes
         self.array_shape = array_shape
-        self.model = self.configure_model(n_basis_funcs)
+        self.model = self.configure_model(n_basis_funcs ,reg_strength)
         self.conns = conns
         self.semaphore_dict = semaphore_dict
         self.stop_event = stop_event
@@ -38,7 +38,7 @@ class Server:
         self.shared_arrays = shared_arrays
         print(f"ARRAY SHAPE {self.array_shape}")
 
-    def configure_model(self, n_basis_funcs):
+    def configure_model(self, n_basis_funcs, reg_strength):
         n_groups = self.array_shape[1]
         n_features = n_groups * n_basis_funcs
         mask = np.zeros((n_groups, n_features))
@@ -46,9 +46,11 @@ class Server:
             mask[i, i * n_basis_funcs:i * n_basis_funcs + n_basis_funcs] = np.ones(n_basis_funcs)
 
         model = self.nemos.glm.PopulationGLM(
-            regularizer=self.nemos.regularizer.UnRegularized(
+            regularizer=self.nemos.regularizer.GroupLasso(
                 solver_name="GradientDescent",
+                mask=mask,
                 solver_kwargs={"stepsize": 0.1, "acceleration": False},
+                regularizer_strength=reg_strength
             )
         )
 
@@ -271,7 +273,7 @@ if __name__ == "__main__":
     server = mp.Process(
         target=server_process,
         args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape),
-        kwargs=dict(n_basis_funcs=9, hist_window_sec=hist_window_sec, bin_size=bin_size) #nstart=neuron_start, nend=neuron_end)
+        kwargs=dict(reg_strength=1e-3, n_basis_funcs=9, hist_window_sec=hist_window_sec, bin_size=bin_size) #nstart=neuron_start, nend=neuron_end)
     )
     server.start()
     server.join()
@@ -279,7 +281,10 @@ if __name__ == "__main__":
     out = shared_results
     if out:
         score_train = out["train_ll"]
+        model_coef = out["params"][0]
+        weights_sum = (model_coef.reshape(195, 9, 195)).sum(axis=1)
         print("final params", score_train)
+        print("fraction set to 0:", weights_sum[weights_sum<1e-06].size / weights_sum.size)
     else:
         print("no shared model in the list...")
 
