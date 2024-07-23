@@ -19,12 +19,7 @@ class Server:
         import jax
         self.jax = jax
         self.nemos = nemos
-        self.model = nemos.glm.PopulationGLM(
-            regularizer=nemos.regularizer.UnRegularized(
-                solver_name="GradientDescent",
-                solver_kwargs={"stepsize": 0.01, "acceleration": False},
-            )
-        )
+        self.model = self.configure_model(n_basis_funcs)
 
         # set mp attributes
         self.conns = conns
@@ -42,6 +37,22 @@ class Server:
         # self.nend = nend
         self.shared_arrays = shared_arrays
         print(f"ARRAY SHAPE {self.array_shape}")
+
+    def configure_model(self, n_basis_funcs):
+        n_groups = self.array_shape[1]
+        n_features = n_groups * n_basis_funcs
+        mask = np.zeros((n_groups, n_features))
+        for i in range(n_groups):
+            mask[i, i * n_basis_funcs:i * n_basis_funcs + n_basis_funcs] = np.ones(n_basis_funcs)
+
+        model = self.nemos.glm.PopulationGLM(
+            regularizer=self.nemos.regularizer.UnRegularized(
+                solver_name="GradientDescent",
+                solver_kwargs={"stepsize": 0.1, "acceleration": False},
+            )
+        )
+
+        return model
 
     def run(self):
         params, state = None, None
@@ -78,7 +89,7 @@ class Server:
                         print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}, total time: {np.round(perf_counter() - tt0, 5)}")
                         counter += 1
 
-                        if counter%(self.num_iterations/100)==0:
+                        if counter%(self.num_iterations/15)==0:
                             train_score = self.model.score(X, y, score_type="log-likelihood")
                             train_ll.append(train_score)
                             print(f"train ll: {train_score}")
@@ -225,7 +236,7 @@ if __name__ == "__main__":
     n_batches = 500
     n_sec = time_quiet_train.tot_length()
     batch_size_sec = n_sec / n_batches
-    num_iterations = 500
+    num_iterations = 500*15
     bin_size = 0.0001
     hist_window_sec = 0.004
 
