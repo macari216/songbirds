@@ -52,9 +52,7 @@ class Server:
             for conn in self.conns:
                 if conn.poll(1):  # Wait for a signal from a worker
                     try:
-                        t0 = perf_counter()
                         worker_id = conn.recv()
-                        print(f"control message worker {worker_id} loaded, time: {np.round(perf_counter() - t0, 5)}")
 
                         t0 = perf_counter()
                         x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
@@ -72,15 +70,15 @@ class Server:
 
                         # initialize at first iteration
                         if counter == 0:
-                            params, state = self.model.initialize_solver(X.d,y)
+                            params, state = self.model.initialize_solver(X,y)
                         # update
                         t0 = perf_counter()
-                        params, state = self.model.update(params, state, X.d,y)
+                        params, state = self.model.update(params, state, X,y)
                         print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}")
                         counter += 1
 
                         if counter%(self.num_iterations/10)==0:
-                            train_score = self.model.score(X.d, y, score_type="log-likelihood")
+                            train_score = self.model.score(X, y, score_type="log-likelihood")
                             train_ll.append(train_score)
                             print(f"train ll: {train_score}")
 
@@ -226,7 +224,7 @@ if __name__ == "__main__":
     n_batches = 500
     n_sec = time_quiet_train.tot_length()
     batch_size_sec = n_sec / n_batches
-    num_iterations = 10
+    num_iterations = 500
     bin_size = 0.0001
     hist_window_sec = 0.004
 
@@ -271,7 +269,7 @@ if __name__ == "__main__":
         params = out["params"]
         state = out["state"]
         score_train = out["train_ll"]
-        print(type(params[0]), type(params[1]), type(state), type(score_train))
+        print(type(shared_results.copy()))
         print("final params", len(params))
     else:
         print("no shared model in the list...")
