@@ -23,7 +23,7 @@ class Server:
         self.model = nemos.glm.GLM(
             regularizer=nemos.regularizer.UnRegularized(
                 solver_name="GradientDescent",
-                solver_kwargs={"stepsize": 0, "acceleration": False},
+                solver_kwargs={"stepsize": 0.2, "acceleration": False},
             )
         )
 
@@ -77,7 +77,7 @@ class Server:
                         print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}")
                         counter += 1
 
-                        if counter%(self.num_iterations/10)==0:
+                        if counter%(self.num_iterations/100)==0:
                             train_score = self.model.score(X, y, score_type="log-likelihood")
                             train_ll.append(train_score)
                             print(f"train ll: {train_score}")
@@ -164,7 +164,10 @@ class Worker:
                 t0 = perf_counter()
                 buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
                 x_count = x_count[:min(int(buffer_array.shape[0]/195), x_count.shape[0])]
-                np.copyto(buffer_array, x_count.flatten())
+                splits = [x_count.get(a, b).d for a, b in x_count.time_support.values]
+                buffer = np.vstack([np.vstack((s, np.full((1, *s.shape[1:]), np.nan))) for s in splits])
+                print(buffer.shape, np.shape(buffer[:-1].flatten()))
+                np.copyto(buffer_array, buffer[:-1].flatten())
 
                 self.conn.send(self.worker_id)
                 # # Wait for confirmation from server
@@ -224,7 +227,7 @@ if __name__ == "__main__":
     n_batches = 500
     n_sec = time_quiet_train.tot_length()
     batch_size_sec = n_sec / n_batches
-    num_iterations = 5000
+    num_iterations = 500 * 5
     bin_size = 0.0001
     hist_window_sec = 0.004
 
@@ -276,7 +279,7 @@ if __name__ == "__main__":
     print("flag set")
 
     # Save results
-    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_n{neuron_id}.npy", shared_results.copy())
+    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_n{neuron_id}.npy", out.copy())
 
     # Release all semaphores to unblock workers if they are waiting
     for _ in range(num_workers):
