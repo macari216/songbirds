@@ -1,6 +1,5 @@
 import multiprocessing as mp
 import os
-import random
 import argparse
 from time import perf_counter
 
@@ -12,7 +11,7 @@ nap.nap_config.suppress_conversion_warnings = True
 
 class Server:
     def __init__(self, conns, semaphore_dict, shared_arrays, stop_event, num_iterations, shared_results, array_shape,
-                 n_basis_funcs=9, bin_size=None, hist_window_sec=None, neuron_id=0):
+                 n_basis_funcs=9, bin_size=None, hist_window_sec=None, nstart=0, nend=1):
         os.environ["JAX_PLATFORM_NAME"] = "gpu"
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
@@ -20,10 +19,10 @@ class Server:
         import jax
         self.jax = jax
         self.nemos = nemos
-        self.model = nemos.glm.GLM(
+        self.model = nemos.glm.PopulationGLM(
             regularizer=nemos.regularizer.UnRegularized(
                 solver_name="GradientDescent",
-                solver_kwargs={"stepsize": 0.2, "acceleration": False},
+                solver_kwargs={"stepsize": 0.1, "acceleration": False},
             )
         )
 
@@ -39,7 +38,8 @@ class Server:
             n_basis_funcs, mode="conv", window_size=self.hist_window_size
         )
         self.array_shape = array_shape
-        self.neuron_id = neuron_id
+        self.nstart = nstart
+        self.nend = nend
         self.shared_arrays = shared_arrays
         print(f"ARRAY SHAPE {self.array_shape}")
 
@@ -64,7 +64,7 @@ class Server:
                         self.semaphore_dict[worker_id].release() # Release semaphore after processing
 
                         #convolve x counts
-                        y = x_count[:, self.neuron_id]
+                        y = x_count[:, self.nstart:self.nend]
                         t0 = perf_counter()
                         X = self.basis.compute_features(x_count)
                         print(f"convolution performed, time: {np.round(perf_counter() - t0, 5)}")
@@ -166,10 +166,8 @@ class Worker:
                 padding = np.vstack([np.vstack((s, np.full((1, *s.shape[1:]), np.nan))) for s in splits])
                 buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
                 n_samp = int(buffer_array.shape[0] / 195)
-                print(np.shape(padding[:n_samp].flatten()), buffer_array.shape)
-                print(padding.sum())
+                print(x_count[~np.isnan(x_count)].sum())
                 np.copyto(buffer_array, padding[:n_samp].flatten())
-                #print(f"worker {self.worker_id} batch copied, time: {np.round(perf_counter() - t0, 5)}")
 
                 self.conn.send(self.worker_id)
 
@@ -206,9 +204,11 @@ if __name__ == "__main__":
 
     # get neuron id
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", "--Neuron", help="Specify GLM receiver neuron (0-194)")
+    parser.add_argument("-ns", "--NeuronStart", help="Specify the start index of predicted neurons")
+    parser.add_argument("-ne", "--NeuronEnd", help="Specify the end index of predicted neurons")
     args = parser.parse_args()
-    neuron_id = int(args.Neuron)
+    neuron_start = int(args.NeuronStart)
+    neuron_end = int(args.NeuronEnd)
 
     # load data
     audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
@@ -226,7 +226,7 @@ if __name__ == "__main__":
     n_batches = 500
     n_sec = time_quiet_train.tot_length()
     batch_size_sec = n_sec / n_batches
-    num_iterations = 500 * 5
+    num_iterations = 500
     bin_size = 0.0001
     hist_window_sec = 0.004
 
@@ -261,7 +261,7 @@ if __name__ == "__main__":
     server = mp.Process(
         target=server_process,
         args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape),
-        kwargs=dict(n_basis_funcs=9, hist_window_sec=hist_window_sec, bin_size=bin_size, neuron_id=neuron_id)
+        kwargs=dict(n_basis_funcs=9, hist_window_sec=hist_window_sec, bin_size=bin_size, nstart=neuron_start, nend=neuron_end)
     )
     server.start()
     server.join()
@@ -278,7 +278,7 @@ if __name__ == "__main__":
     print("flag set")
 
     # Save results
-    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_n{neuron_id}.npy", out.copy())
+    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_n{neuron_start}_{neuron_end}.npy", out.copy())
 
     # Release all semaphores to unblock workers if they are waiting
     for _ in range(num_workers):
