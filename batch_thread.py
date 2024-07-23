@@ -224,7 +224,7 @@ if __name__ == "__main__":
     n_batches = 500
     n_sec = time_quiet_train.tot_length()
     batch_size_sec = n_sec / n_batches
-    num_iterations = 500
+    num_iterations = 5000
     bin_size = 0.0001
     hist_window_sec = 0.004
 
@@ -266,11 +266,8 @@ if __name__ == "__main__":
 
     out = shared_results
     if out:
-        params = out["params"]
-        state = out["state"]
         score_train = out["train_ll"]
-        print(type(shared_results.copy()))
-        print("final params", len(params))
+        print("final params", score_train)
     else:
         print("no shared model in the list...")
 
@@ -279,7 +276,7 @@ if __name__ == "__main__":
     print("flag set")
 
     # Save results
-    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_n{neuron_id}.npy", shared_results)
+    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_n{neuron_id}.npy", shared_results.copy())
 
     # Release all semaphores to unblock workers if they are waiting
     for _ in range(num_workers):
