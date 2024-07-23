@@ -151,7 +151,8 @@ class Worker:
     def batcher(self):
         ep = self.epochs[np.random.choice(range(len(self.epochs)))]
         X_counts = self.spike_times.count(self.bin_size, ep=ep)
-        return np.asarray(X_counts.d, dtype=np.float32)
+        return nap.TsdFrame(X_counts.t, X_counts.d.astype(np.float32), time_support=X_counts.time_support)
+
 
     def run(self):
         try:
@@ -160,20 +161,16 @@ class Worker:
                     continue
                 t0 = perf_counter()
                 x_count = self.batcher()
-                # Write data to shared memory using dedicated slice
-                t0 = perf_counter()
-                buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
-                x_count = x_count[:min(int(buffer_array.shape[0]/195), x_count.shape[0])]
+                n_samp = x_count.shape[0]
                 splits = [x_count.get(a, b).d for a, b in x_count.time_support.values]
-                buffer = np.vstack([np.vstack((s, np.full((1, *s.shape[1:]), np.nan))) for s in splits])
-                print(buffer.shape, np.shape(buffer[:-1].flatten()))
-                np.copyto(buffer_array, buffer[:-1].flatten())
+                padding = np.vstack([np.vstack((s, np.full((1, *s.shape[1:]), np.nan))) for s in splits])
+                print(padding.shape, np.shape(padding[:n_samp].flatten()))
+                buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
+                np.copyto(buffer_array, padding[:n_samp].flatten())
+                print(f"worker {self.worker_id} batch copied, time: {np.round(perf_counter() - t0, 5)}")
 
                 self.conn.send(self.worker_id)
-                # # Wait for confirmation from server
-                # if not self.conn.recv():
-                #     print(f"worker {self.worker_id} retrying to send control message...")
-                #     continue
+
         finally:
             print(f"worker {self.worker_id} exits loop...")
 
