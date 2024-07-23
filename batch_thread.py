@@ -60,6 +60,7 @@ class Server:
                         x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
                             self.array_shape)
                         print(f"data loaded, time: {np.round(perf_counter() - t0, 5)}")
+                        print(np.shape(x_count))
 
                         self.semaphore_dict[worker_id].release() # Release semaphore after processing
 
@@ -161,12 +162,11 @@ class Worker:
                     continue
                 t0 = perf_counter()
                 x_count = self.batcher()
-                print(f"worker {self.worker_id} batch ready, time: {np.round(perf_counter() - t0, 5)}")
                 # Write data to shared memory using dedicated slice
                 t0 = perf_counter()
                 buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
-                np.copyto(buffer_array, x_count[:min(buffer_array.shape[0], x_count.shape[0])].flatten())
-                print(f"worker {self.worker_id} batch copied, time: {np.round(perf_counter() - t0, 5)}")
+                x_count = x_count[:min(int(buffer_array.shape[0]/195), x_count.shape[0])]
+                np.copyto(buffer_array, x_count.flatten())
 
                 self.conn.send(self.worker_id)
                 # # Wait for confirmation from server
@@ -261,7 +261,7 @@ if __name__ == "__main__":
     server = mp.Process(
         target=server_process,
         args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape),
-        kwargs=dict(n_basis_funcs=9, hist_window_sec=hist_window_sec, bin_size=hist_window_sec, neuron_id=neuron_id)
+        kwargs=dict(n_basis_funcs=9, hist_window_sec=hist_window_sec, bin_size=bin_size, neuron_id=neuron_id)
     )
     server.start()
     server.join()
