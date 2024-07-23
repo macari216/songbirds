@@ -52,6 +52,7 @@ class Server:
             for conn in self.conns:
                 if conn.poll(1):  # Wait for a signal from a worker
                     try:
+                        tt0 = perf_counter()
                         worker_id = conn.recv()
 
                         t0 = perf_counter()
@@ -74,7 +75,7 @@ class Server:
                         # update
                         t0 = perf_counter()
                         params, state = self.model.update(params, state, X,y)
-                        print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}")
+                        print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}, total time: {np.round(perf_counter() - tt0, 5)}")
                         counter += 1
 
                         if counter%(self.num_iterations/100)==0:
@@ -161,13 +162,12 @@ class Worker:
                     continue
                 t0 = perf_counter()
                 x_count = self.batcher()
-                n_samp = x_count.shape[0]
+                n_samp = x_count.shape[0] - 1
                 splits = [x_count.get(a, b).d for a, b in x_count.time_support.values]
                 padding = np.vstack([np.vstack((s, np.full((1, *s.shape[1:]), np.nan))) for s in splits])
-                print(padding.shape, np.shape(padding[:n_samp].flatten()))
                 buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
                 np.copyto(buffer_array, padding[:n_samp].flatten())
-                print(f"worker {self.worker_id} batch copied, time: {np.round(perf_counter() - t0, 5)}")
+                #print(f"worker {self.worker_id} batch copied, time: {np.round(perf_counter() - t0, 5)}")
 
                 self.conn.send(self.worker_id)
 
@@ -192,7 +192,7 @@ if __name__ == "__main__":
 
     # set MP parameters
     shutdown_flag = mp.Event()
-    batch_qsize = 3  # Number of pre-loaded batches
+    batch_qsize = 5  # Number of pre-loaded batches
     batch_queue = mp.Queue(maxsize=batch_qsize)
     queue_semaphore = mp.Semaphore(batch_qsize)
     server_semaphore = mp.Semaphore(0)
