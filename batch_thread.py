@@ -59,7 +59,6 @@ class Server:
                         x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
                             self.array_shape)
                         print(f"data loaded, time: {np.round(perf_counter() - t0, 5)}")
-                        print(x_count.sum())
 
                         self.semaphore_dict[worker_id].release() # Release semaphore after processing
 
@@ -166,7 +165,6 @@ class Worker:
                 padding = np.vstack([np.vstack((s, np.full((1, *s.shape[1:]), np.nan))) for s in splits])
                 buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
                 n_samp = int(buffer_array.shape[0] / 195)
-                print(x_count[~np.isnan(x_count)].sum())
                 np.copyto(buffer_array, padding[:n_samp].flatten())
 
                 self.conn.send(self.worker_id)
@@ -204,8 +202,8 @@ if __name__ == "__main__":
 
     # get neuron id
     parser = argparse.ArgumentParser()
-    parser.add_argument("-ns", "--NeuronStart", help="Specify the start index of predicted neurons")
-    parser.add_argument("-ne", "--NeuronEnd", help="Specify the end index of predicted neurons")
+    parser.add_argument("-s", "--NeuronStart", help="Specify the start index of predicted neurons")
+    parser.add_argument("-e", "--NeuronEnd", help="Specify the end index of predicted neurons")
     args = parser.parse_args()
     neuron_start = int(args.NeuronStart)
     neuron_end = int(args.NeuronEnd)
