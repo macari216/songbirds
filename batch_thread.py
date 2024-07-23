@@ -58,6 +58,7 @@ class Server:
                         t0 = perf_counter()
                         x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
                             self.array_shape)
+                        print(x_count[:20])
                         print(f"data loaded, time: {np.round(perf_counter() - t0, 5)}")
 
                         self.semaphore_dict[worker_id].release() # Release semaphore after processing
@@ -67,6 +68,7 @@ class Server:
                         t0 = perf_counter()
                         X = self.basis.compute_features(x_count)
                         print(f"convolution performed, time: {np.round(perf_counter() - t0, 5)}")
+                        print(X[:50])
 
                         # initialize at first iteration
                         if counter == 0:
@@ -166,6 +168,7 @@ class Worker:
                 buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
                 n_samp = int(buffer_array.shape[0] / 195)
                 print(np.shape(padding[:n_samp].flatten()), buffer_array.shape)
+                print(padding[:20])
                 np.copyto(buffer_array, padding[:n_samp].flatten())
                 #print(f"worker {self.worker_id} batch copied, time: {np.round(perf_counter() - t0, 5)}")
 
