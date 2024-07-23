@@ -3,6 +3,7 @@ import scipy.io as sio
 import pynapple as nap
 import nemos as nmo
 import matplotlib.pyplot as plt
+import pandas as pd
 
 results_dict = np.load("/songbirds/results.npy", allow_pickle=True).item()
 weights = results_dict["weights"]
@@ -278,8 +279,10 @@ ax2.set_xlabel("pre-synaptic neuron")
 ax2.set_title("putative inhibitory neurons")
 fig.suptitle("candidate hub neurons")
 
-def comp_ccg(n1):
-    n2 = 9
+filters = np.concatenate((filters, np.zeros((40,1))), axis=1)
+filter_plot = (filters.reshape(40,14,14)).transpose(1,2,0)
+
+def comp_ccg(n1, n2):
     n1_spikes = {n1: nap.Ts(spikes_quiet[n1, 0].flatten())}
     n1_spikes = nap.TsGroup(n1_spikes)
     n2_spikes = {n2: nap.Ts(spikes_quiet[n2, 0].flatten())}
@@ -293,8 +296,7 @@ def comp_ccg(n1):
     return ccg_counts
 
 
-def ccg_filt_plot(n1, counts, filters):
-    n2 = 9
+def ccg_filt_plot(n1, n2, counts, filters):
     x_ticks = np.round(counts[(n1, n2)].index, 3)
     filter = filters[:,n1]
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
@@ -309,5 +311,36 @@ def ccg_filt_plot(n1, counts, filters):
     ax2.set_ylabel("gain")
     ax2.set_xticks(x_ticks[x_ticks>=0])
     ax2.set_title(f"Filter from {n1} to {n2}")
+    fig.subplots_adjust(wspace=0.3)
+    return fig
+
+# ACG
+def comp_accg(n1):
+    n1_spikes = {n1: nap.Ts(spikes_quiet[n1, 0].flatten())}
+    n1_spikes = nap.TsGroup(n1_spikes)
+    ccg = nap.compute_autocorrelogram(n1_spikes, 0.0001, 0.15, norm=False)
+    ccg_counts = {}
+    t1 = n1_spikes[n1].index
+    nt1 = len(t1)
+    ccg_counts = ccg * (nt1 * 0.0001)
+    ccg_counts = pd.DataFrame.from_dict(ccg_counts)
+    return ccg_counts
+
+def acg_filt_plot(n1, counts, filters):
+    x_ticks = np.array([-0.15,0.15])
+    filter = filters[:,n1]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    ax1.bar(counts[n1].index, counts[n1], width=0.0001)
+    ax1.axvline(0, 0, 1, color='r', ls='--')
+    ax1.set_xticks(x_ticks, labels=(x_ticks*1000).astype(int))
+    ax1.set_xlabel("lag (ms)")
+    ax1.set_ylabel("spike count")
+    ax1.set_title(f"ACG for Neuron {n1}")
+    ax2.plot(time, filter, label=(n1))
+    ax2.set_xlabel("lag (ms)")
+    ax2.set_ylabel("gain")
+    x_ticks = np.arange(0,0.005,0.001)
+    ax2.set_xticks(x_ticks, labels=(x_ticks*1000).astype(int))
+    ax2.set_title(f"Self-to-self filter, Neuron {n1}")
     fig.subplots_adjust(wspace=0.3)
     return fig
