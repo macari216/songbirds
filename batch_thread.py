@@ -19,9 +19,10 @@ class Server:
         import jax
         self.jax = jax
         self.nemos = nemos
-        self.model = self.configure_model(n_basis_funcs)
 
         # set mp attributes
+        self.array_shape = array_shape
+        self.model = self.configure_model(n_basis_funcs)
         self.conns = conns
         self.semaphore_dict = semaphore_dict
         self.stop_event = stop_event
@@ -32,7 +33,6 @@ class Server:
         self.basis = self.nemos.basis.RaisedCosineBasisLog(
             n_basis_funcs, mode="conv", window_size=self.hist_window_size
         )
-        self.array_shape = array_shape
         # self.nstart = nstart
         # self.nend = nend
         self.shared_arrays = shared_arrays
