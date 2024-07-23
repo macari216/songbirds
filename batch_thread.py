@@ -11,7 +11,7 @@ nap.nap_config.suppress_conversion_warnings = True
 
 class Server:
     def __init__(self, conns, semaphore_dict, shared_arrays, stop_event, num_iterations, shared_results, array_shape,
-                 n_basis_funcs=9, bin_size=None, hist_window_sec=None, nstart=0, nend=1):
+                 n_basis_funcs=9, bin_size=None, hist_window_sec=None): # nstart=0, nend=1):
         os.environ["JAX_PLATFORM_NAME"] = "gpu"
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
@@ -22,7 +22,7 @@ class Server:
         self.model = nemos.glm.PopulationGLM(
             regularizer=nemos.regularizer.UnRegularized(
                 solver_name="GradientDescent",
-                solver_kwargs={"stepsize": 0.1, "acceleration": False},
+                solver_kwargs={"stepsize": 0.01, "acceleration": False},
             )
         )
 
@@ -38,8 +38,8 @@ class Server:
             n_basis_funcs, mode="conv", window_size=self.hist_window_size
         )
         self.array_shape = array_shape
-        self.nstart = nstart
-        self.nend = nend
+        # self.nstart = nstart
+        # self.nend = nend
         self.shared_arrays = shared_arrays
         print(f"ARRAY SHAPE {self.array_shape}")
 
@@ -63,7 +63,8 @@ class Server:
                         self.semaphore_dict[worker_id].release() # Release semaphore after processing
 
                         #convolve x counts
-                        y = x_count[:, self.nstart:self.nend]
+                        #y = x_count[:, self.nstart:self.nend]
+                        y = x_count
                         t0 = perf_counter()
                         X = self.basis.compute_features(x_count)
                         print(f"convolution performed, time: {np.round(perf_counter() - t0, 5)}")
@@ -200,13 +201,13 @@ if __name__ == "__main__":
     manager = mp.Manager()
     shared_results = manager.dict()  # return the model to the main thread
 
-    # get neuron id
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-s", "--NeuronStart", help="Specify the start index of predicted neurons")
-    parser.add_argument("-e", "--NeuronEnd", help="Specify the end index of predicted neurons")
-    args = parser.parse_args()
-    neuron_start = int(args.NeuronStart)
-    neuron_end = int(args.NeuronEnd)
+    # # get neuron id
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("-s", "--NeuronStart", help="Specify the start index of predicted neurons")
+    # parser.add_argument("-e", "--NeuronEnd", help="Specify the end index of predicted neurons")
+    # args = parser.parse_args()
+    # neuron_start = int(args.NeuronStart)
+    # neuron_end = int(args.NeuronEnd)
 
     # load data
     audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
@@ -259,7 +260,7 @@ if __name__ == "__main__":
     server = mp.Process(
         target=server_process,
         args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape),
-        kwargs=dict(n_basis_funcs=9, hist_window_sec=hist_window_sec, bin_size=bin_size, nstart=neuron_start, nend=neuron_end)
+        kwargs=dict(n_basis_funcs=9, hist_window_sec=hist_window_sec, bin_size=bin_size) #nstart=neuron_start, nend=neuron_end)
     )
     server.start()
     server.join()
@@ -276,7 +277,7 @@ if __name__ == "__main__":
     print("flag set")
 
     # Save results
-    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_n{neuron_start}_{neuron_end}.npy", out.copy())
+    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_all.npy", out.copy())
 
     # Release all semaphores to unblock workers if they are waiting
     for _ in range(num_workers):
