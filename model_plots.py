@@ -277,3 +277,37 @@ ax2.bar(np.arange(1,95), n_conx_inh, color=color_inh)
 ax2.set_xlabel("pre-synaptic neuron")
 ax2.set_title("putative inhibitory neurons")
 fig.suptitle("candidate hub neurons")
+
+def comp_ccg(n1):
+    n2 = 9
+    n1_spikes = {n1: nap.Ts(spikes_quiet[n1, 0].flatten())}
+    n1_spikes = nap.TsGroup(n1_spikes)
+    n2_spikes = {n2: nap.Ts(spikes_quiet[n2, 0].flatten())}
+    n2_spikes = nap.TsGroup(n2_spikes)
+    ccg = nap.compute_crosscorrelogram((n1_spikes, n2_spikes), 0.0001, 0.004, norm=False)
+    ccg_counts = {}
+    t1 = n1_spikes[n1].index
+    nt1 = len(t1)
+    ccg_counts[(n1, n2)] = ccg[(n1, n2)] * (nt1 * 0.0001)
+    ccg_counts = pd.DataFrame.from_dict(ccg_counts)
+    return ccg_counts
+
+
+def ccg_filt_plot(n1, counts, filters):
+    n2 = 9
+    x_ticks = np.round(counts[(n1, n2)].index, 3)
+    filter = filters[:,n1]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    ax1.bar(counts[(n1, n2)].index, counts[(n1, n2)], width=0.0001)
+    ax1.axvline(0, 0, 1, color='r', ls='--')
+    ax1.set_xticks(x_ticks)
+    ax1.set_xlabel("lag (ms)")
+    ax1.set_ylabel("spike count")
+    ax1.set_title(f"CCG between {n1} (ref) and {n2} (target)")
+    ax2.plot(time, filter, label=(n1,n2))
+    ax2.set_xlabel("lag (ms)")
+    ax2.set_ylabel("gain")
+    ax2.set_xticks(x_ticks[x_ticks>=0])
+    ax2.set_title(f"Filter from {n1} to {n2}")
+    fig.subplots_adjust(wspace=0.3)
+    return fig
