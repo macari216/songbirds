@@ -47,7 +47,7 @@ class Server:
 
         model = self.nemos.glm.PopulationGLM(
             regularizer=self.nemos.regularizer.GroupLasso(
-                solver_name="GradientDescent",
+                solver_name="ProximalGradient",
                 mask=mask,
                 solver_kwargs={"stepsize": 0.1, "acceleration": False},
                 regularizer_strength=reg_strength
@@ -85,6 +85,7 @@ class Server:
                         # initialize at first iteration
                         if counter == 0:
                             params, state = self.model.initialize_solver(X,y)
+                            print(params[1])
                         # update
                         t0 = perf_counter()
                         params, state = self.model.update(params, state, X,y)
@@ -241,6 +242,10 @@ if __name__ == "__main__":
     num_iterations = 500*15
     bin_size = 0.0001
     hist_window_sec = 0.004
+    n_fun = 9
+    n_presn = len(ts_dict_quiet)
+    n_postsn = n_presn
+    #n_postsn = len(np.arange(neuron_start, neuron_end))
 
     # set up workers
     num_workers = 3
@@ -273,7 +278,7 @@ if __name__ == "__main__":
     server = mp.Process(
         target=server_process,
         args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape),
-        kwargs=dict(reg_strength=1e-3, n_basis_funcs=9, hist_window_sec=hist_window_sec, bin_size=bin_size) #nstart=neuron_start, nend=neuron_end)
+        kwargs=dict(reg_strength=1e-3, n_basis_funcs=n_fun, hist_window_sec=hist_window_sec, bin_size=bin_size) #nstart=neuron_start, nend=neuron_end)
     )
     server.start()
     server.join()
@@ -282,9 +287,9 @@ if __name__ == "__main__":
     if out:
         score_train = out["train_ll"]
         model_coef = out["params"][0]
-        weights_sum = (model_coef.reshape(195, 9, 195)).sum(axis=1)
+        weights_sum = (model_coef.reshape(n_presn, n_fun, n_postsn)).sum(axis=1)
         print("final params", score_train)
-        print("fraction set to 0:", weights_sum[weights_sum<1e-06].size / weights_sum.size)
+        print("fraction set to 0:", weights_sum[weights_sum==0].size / weights_sum.size)
     else:
         print("no shared model in the list...")
 
