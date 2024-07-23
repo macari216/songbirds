@@ -59,7 +59,6 @@ class Server:
                         x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
                             self.array_shape)
                         print(f"data loaded, time: {np.round(perf_counter() - t0, 5)}")
-                        print(np.shape(x_count))
 
                         self.semaphore_dict[worker_id].release() # Release semaphore after processing
 
@@ -162,10 +161,11 @@ class Worker:
                     continue
                 t0 = perf_counter()
                 x_count = self.batcher()
-                n_samp = x_count.shape[0] - 1
                 splits = [x_count.get(a, b).d for a, b in x_count.time_support.values]
                 padding = np.vstack([np.vstack((s, np.full((1, *s.shape[1:]), np.nan))) for s in splits])
                 buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
+                n_samp = int(buffer_array.shape[0] / 195)
+                print(np.shape(padding[:n_samp].flatten()), buffer_array.shape)
                 np.copyto(buffer_array, padding[:n_samp].flatten())
                 #print(f"worker {self.worker_id} batch copied, time: {np.round(perf_counter() - t0, 5)}")
 
