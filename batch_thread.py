@@ -165,7 +165,7 @@ class Worker:
                 # Write data to shared memory using dedicated slice
                 t0 = perf_counter()
                 buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
-                np.copyto(buffer_array, x_count.flatten())
+                np.copyto(buffer_array, x_count[:min(buffer_array.shape[0], x_count.shape[0])].flatten())
                 print(f"worker {self.worker_id} batch copied, time: {np.round(perf_counter() - t0, 5)}")
 
                 self.conn.send(self.worker_id)
@@ -234,7 +234,7 @@ if __name__ == "__main__":
     num_workers = 3
 
     # shared arrays for data transfer
-    array_shape = (int(batch_size_sec / bin_size)+1, len(ts_dict_quiet))  # Adjust to match actual data size
+    array_shape = (int(batch_size_sec / bin_size), len(ts_dict_quiet))  # Adjust to match actual data size
     shared_arrays = {i: mp.Array('f', array_shape[0] * array_shape[1], lock=False) for i in range(num_workers)}
 
     # set up pipes, semaphores, and workers
