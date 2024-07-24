@@ -11,7 +11,8 @@ nap.nap_config.suppress_conversion_warnings = True
 
 class Server:
     def __init__(self, conns, semaphore_dict, shared_arrays, stop_event, num_iterations, shared_results, array_shape,
-                 reg_strength=0.001, n_basis_funcs=9, bin_size=None, hist_window_sec=None): # nstart=0, nend=1):
+                 test_counts,
+                 reg_strength=0.001, n_basis_funcs=9, hist_window_sec=None, bin_size=None, n_ep=1): # nstart=0, nend=1):
         os.environ["JAX_PLATFORM_NAME"] = "gpu"
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
@@ -26,6 +27,7 @@ class Server:
         self.conns = conns
         self.semaphore_dict = semaphore_dict
         self.stop_event = stop_event
+        self.n_epochs = n_ep
         self.num_iterations = num_iterations
         self.shared_results = shared_results
         self.bin_size = bin_size
@@ -33,6 +35,7 @@ class Server:
         self.basis = self.nemos.basis.RaisedCosineBasisLog(
             n_basis_funcs, mode="conv", window_size=self.hist_window_size
         )
+        self.test_batch = test_counts
         # self.nstart = nstart
         # self.nend = nend
         self.shared_arrays = shared_arrays
@@ -91,10 +94,17 @@ class Server:
                         print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}, total time: {np.round(perf_counter() - tt0, 5)}")
                         counter += 1
 
-                        if counter%(self.num_iterations/15)==0:
+                        if counter%(self.num_iterations/self.n_epochs)==0:
                             train_score = self.model.score(X, y, score_type="log-likelihood")
                             train_ll.append(train_score)
                             print(f"train ll: {train_score}")
+
+                        if counter == num_iterations-1:
+                            X = self.basis.compute_features(self.test_batch)
+                            y = self.test_batch
+                            test_score = self.model.score(X, y, score_type="log-likelihood")
+                            train_ll.append(test_score)
+                            print(f"test ll: {test_score}")
 
                     except Exception as e:
                         print(f"Exception: {e}")
@@ -234,15 +244,19 @@ if __name__ == "__main__":
 
     # set the number of iteration and batches
     n_batches = 500
+    n_epochs = 10
     n_sec = time_quiet_train.tot_length()
     batch_size_sec = n_sec / n_batches
-    num_iterations = 500*15
+    num_iterations = n_batches * n_epochs
     bin_size = 0.0001
     hist_window_sec = 0.004
     n_fun = 9
     n_presn = len(ts_dict_quiet)
     n_postsn = n_presn
     #n_postsn = len(np.arange(neuron_start, neuron_end))
+
+    # create a test batch
+    test_counts = spike_times.count(bin_size, ep=time_quiet_test[54:56])
 
     # set up workers
     num_workers = 3
@@ -274,8 +288,10 @@ if __name__ == "__main__":
 
     server = mp.Process(
         target=server_process,
-        args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape),
-        kwargs=dict(reg_strength=reg_strength, n_basis_funcs=n_fun, hist_window_sec=hist_window_sec, bin_size=bin_size) #nstart=neuron_start, nend=neuron_end)
+        args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape,
+              test_counts),
+        kwargs=dict(reg_strength=reg_strength, n_basis_funcs=n_fun, hist_window_sec=hist_window_sec, bin_size=bin_size,
+                    n_ep=n_epochs) #nstart=neuron_start, nend=neuron_end)
     )
     server.start()
     server.join()
