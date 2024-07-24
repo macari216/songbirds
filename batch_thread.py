@@ -152,10 +152,12 @@ class Worker:
     def compute_starts(self, n_bat, time_quiet, n_seconds):
         iset_batches = []
         cnt = 0
+        t0 = time_quiet.time_span().start
+        tn = time_quiet.time_span().end
         while cnt < n_bat:
-            start = np.random.uniform(0, n_seconds)
+            start = np.random.uniform(t0, tn)
             end = start + self.batch_size_sec
-            tot_time = nap.IntervalSet(end, n_seconds).intersect(time_quiet)
+            tot_time = nap.IntervalSet(end, tn).intersect(time_quiet)
             if tot_time.tot_length() < self.batch_size_sec:
                 continue
             ep = nap.IntervalSet(start, end).intersect(time_quiet)
@@ -256,7 +258,7 @@ if __name__ == "__main__":
     #n_postsn = len(np.arange(neuron_start, neuron_end))
 
     # create a test batch
-    test_counts = spike_times.count(bin_size, ep=time_quiet_test[54:56])
+    test_counts = spike_times.count(bin_size, ep=time_quiet_test[54])
 
     # set up workers
     num_workers = 3
