@@ -4,6 +4,8 @@ import pynapple as nap
 import nemos as nmo
 import matplotlib.pyplot as plt
 import pandas as pd
+from itertools import combinations, product
+import seaborn as sns
 
 results_dict = np.load("/songbirds/results.npy", allow_pickle=True).item()
 weights = results_dict["weights"]
@@ -298,33 +300,34 @@ def comp_ccg(n1, n2):
 
 def ccg_filt_plot(n1, n2, counts, filters):
     x_ticks = np.round(counts[(n1, n2)].index, 3)
-    filter = filters[:,n1]
+    filter = filters[n2,n1]
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     ax1.bar(counts[(n1, n2)].index, counts[(n1, n2)], width=0.0001)
     ax1.axvline(0, 0, 1, color='r', ls='--')
-    ax1.set_xticks(x_ticks)
+    ax1.set_xticks(x_ticks, labels=(x_ticks*1000).astype(int))
     ax1.set_xlabel("lag (ms)")
     ax1.set_ylabel("spike count")
     ax1.set_title(f"CCG between {n1} (ref) and {n2} (target)")
     ax2.plot(time, filter, label=(n1,n2))
     ax2.set_xlabel("lag (ms)")
     ax2.set_ylabel("gain")
-    ax2.set_xticks(x_ticks[x_ticks>=0])
+    x_ticks = x_ticks[x_ticks>=0]
+    ax2.set_xticks(x_ticks, labels=(x_ticks*1000).astype(int))
     ax2.set_title(f"Filter from {n1} to {n2}")
     fig.subplots_adjust(wspace=0.3)
     return fig
 
 # ACG
-def comp_accg(n1):
+def comp_acg(n1):
     n1_spikes = {n1: nap.Ts(spikes_quiet[n1, 0].flatten())}
     n1_spikes = nap.TsGroup(n1_spikes)
-    ccg = nap.compute_autocorrelogram(n1_spikes, 0.0001, 0.15, norm=False)
-    ccg_counts = {}
+    acg = nap.compute_autocorrelogram(n1_spikes, 0.0001, 0.15, norm=False)
+    acg_counts = {}
     t1 = n1_spikes[n1].index
     nt1 = len(t1)
-    ccg_counts = ccg * (nt1 * 0.0001)
-    ccg_counts = pd.DataFrame.from_dict(ccg_counts)
-    return ccg_counts
+    acg_counts[n1] = acg * (nt1 * 0.0001)
+    acg_counts = pd.DataFrame.from_dict(ccg_counts)
+    return acg_counts
 
 def acg_filt_plot(n1, counts, filters):
     x_ticks = np.array([-0.15,0.15])
@@ -344,3 +347,36 @@ def acg_filt_plot(n1, counts, filters):
     ax2.set_title(f"Self-to-self filter, Neuron {n1}")
     fig.subplots_adjust(wspace=0.3)
     return fig
+
+
+ccg = nap.compute_crosscorrelogram((spike_times_quiet,spike_times_quiet), 0.0001, 0.004, norm=False)
+acg = nap.compute_autocorrelogram(spike_times_quiet, 0.0001, 0.15, norm=False)
+
+pairs = product(list(spike_times_quiet),list(spike_times_quiet))
+ccg_counts = {}
+for i,j in pairs:
+    t1 = spike_times_quiet[i].index
+    nt1 = len(t1)
+    ccg_counts[(i,j)] = ccg[(i,j)] * (nt1*0.0001)
+ccg_counts = pd.DataFrame.from_dict(ccg_counts)
+
+for i in range(195):
+    ccg=ccg.drop(labels=(i,i),axis=1)
+
+frates_sorted = ccg.max(0).sort_values(ascending=False)
+
+acg_counts ={}
+for i in range(195):
+    t1 = spike_times_quiet[i].index
+    nt1 = len(t1)
+    acg_counts[i] = acg[i] * (nt1*0.0001)
+acg_counts = pd.DataFrame.from_dict(acg_counts)
+
+ccg_counts_sum = ccg_counts.sum(0)
+counts_sorted = ccg_counts_sum.sort_values(ascending=False)
+
+plt.figure()
+plt.bar(ccg_counts[(124, 125)].index, ccg_counts[(124, 125)], width=0.0001)
+plt.vlines(0, 0, max(ccg_counts[(124, 125)]), color='r', ls='--')
+sns.kdeplot(x=ccg_counts[(124,125)].index, weights=ccg_counts[(124,125)].values, color='yellow', bw_adjust=0.03, cut=0)
+
