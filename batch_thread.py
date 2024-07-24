@@ -85,7 +85,6 @@ class Server:
                         # initialize at first iteration
                         if counter == 0:
                             params, state = self.model.initialize_solver(X,y)
-                            print(params[1])
                         # update
                         t0 = perf_counter()
                         params, state = self.model.update(params, state, X,y)
@@ -215,13 +214,11 @@ if __name__ == "__main__":
     manager = mp.Manager()
     shared_results = manager.dict()  # return the model to the main thread
 
-    # # get neuron id
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("-s", "--NeuronStart", help="Specify the start index of predicted neurons")
-    # parser.add_argument("-e", "--NeuronEnd", help="Specify the end index of predicted neurons")
-    # args = parser.parse_args()
-    # neuron_start = int(args.NeuronStart)
-    # neuron_end = int(args.NeuronEnd)
+    # get cv parameter
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-r", "--RegStrength", help="Specify group lasso regularizer strength (float)")
+    args = parser.parse_args()
+    reg_strength = float(args.RegStrength)
 
     # load data
     audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
@@ -278,7 +275,7 @@ if __name__ == "__main__":
     server = mp.Process(
         target=server_process,
         args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape),
-        kwargs=dict(reg_strength=1e-3, n_basis_funcs=n_fun, hist_window_sec=hist_window_sec, bin_size=bin_size) #nstart=neuron_start, nend=neuron_end)
+        kwargs=dict(reg_strength=reg_strength, n_basis_funcs=n_fun, hist_window_sec=hist_window_sec, bin_size=bin_size) #nstart=neuron_start, nend=neuron_end)
     )
     server.start()
     server.join()
@@ -298,7 +295,7 @@ if __name__ == "__main__":
     print("flag set")
 
     # Save results
-    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_all.npy", out.copy())
+    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_{reg_strength}.npy", out.copy())
 
     # Release all semaphores to unblock workers if they are waiting
     for _ in range(num_workers):
