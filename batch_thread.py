@@ -67,10 +67,11 @@ class Server:
         while not self.stop_event.is_set() and counter < self.num_iterations:
             for conn in self.conns:
                 if conn.poll(1):  # Wait for a signal from a worker
+                    print("received signal from worker")
                     try:
                         tt0 = perf_counter()
                         worker_id = conn.recv()
-
+                        print(f"control message worker {worker_id} loaded")
                         t0 = perf_counter()
                         x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
                             self.array_shape)
@@ -111,7 +112,7 @@ class Server:
                         pass
 
         # stop workers
-        print(f"all interations, time: {perf_counter() - tep0}")
+        print(f"all iterations, time: {perf_counter() - tep0}")
         self.stop_event.set()
         # add the model to the manager shared param
         self.shared_results["params"] = params
@@ -181,10 +182,12 @@ class Worker:
     def run(self):
         try:
             while not self.shutdown_flag.is_set():
+                print(f"worker {self.worker_id} acquiring semaphore...")
                 if not self.semaphore.acquire(timeout=1):
                     continue
-                t0 = perf_counter()
+                print(f"worker {self.worker_id} preparing a batch...")
                 x_count = self.batcher()
+                print(f"worker {self.worker_id} batch ready")
                 splits = [x_count.get(a, b).d for a, b in x_count.time_support.values]
                 padding = np.vstack([np.vstack((s, np.full((1, *s.shape[1:]), np.nan))) for s in splits])
                 buffer_array = np.frombuffer(self.shared_array, dtype=np.float32)
@@ -192,6 +195,7 @@ class Worker:
                 np.copyto(buffer_array, padding[:n_samp].flatten())
 
                 self.conn.send(self.worker_id)
+                print(f"worker {self.worker_id} sent control message")
 
         finally:
             print(f"worker {self.worker_id} exits loop...")
