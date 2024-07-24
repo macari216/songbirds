@@ -239,13 +239,15 @@ if __name__ == "__main__":
     audio_segm = nap.IntervalSet(start=audio_segm[:, 0], end=audio_segm[:, 1])
     ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
     spike_times = nap.TsGroup(ts_dict_quiet)
-    time_quiet_train = nap.IntervalSet(0, off_time*0.8).set_diff(audio_segm)
+    #time_quiet_train = nap.IntervalSet(0, off_time*0.8).set_diff(audio_segm)
     time_quiet_test = nap.IntervalSet(off_time * 0.8, off_time).set_diff(audio_segm)
+    first_half = nap.IntervalSet(0, off_time*0.4).set_diff(audio_segm)
+    second_half = nap.IntervalSet(off_time * 0.4, off_time * 0.8).set_diff(audio_segm)
 
     # set the number of iteration and batches
     n_batches = 500
     n_epochs = 10
-    n_sec = time_quiet_train.tot_length()
+    n_sec = first_half.tot_length()
     batch_size_sec = n_sec / n_batches
     num_iterations = n_batches * n_epochs
     bin_size = 0.0001
@@ -274,7 +276,7 @@ if __name__ == "__main__":
     for i, conn in enumerate(child_conns):
         p = mp.Process(
             target=worker_process,
-            args=(conn, i, spike_times, time_quiet_train, batch_size_sec, n_batches, shared_arrays[i], semaphore_dict[i]),
+            args=(conn, i, spike_times, first_half, batch_size_sec, n_batches, shared_arrays[i], semaphore_dict[i]),
             kwargs=dict(
                 bin_size=bin_size,
                 shutdown_flag=shutdown_flag,
