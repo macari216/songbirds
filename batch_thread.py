@@ -93,7 +93,7 @@ class Server:
                         print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}, total time: {np.round(perf_counter() - tt0, 5)}")
                         counter += 1
 
-                        if counter%(self.num_iterations/self.n_epochs)==0:
+                        if counter%(self.num_iterations/self.n_epochs*2)==0:
                             train_score = self.model.score(X, y, score_type="log-likelihood")
                             train_ll.append(train_score)
                             print(f"train ll: {train_score}")
@@ -239,15 +239,15 @@ if __name__ == "__main__":
     audio_segm = nap.IntervalSet(start=audio_segm[:, 0], end=audio_segm[:, 1])
     ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
     spike_times = nap.TsGroup(ts_dict_quiet)
-    #time_quiet_train = nap.IntervalSet(0, off_time*0.8).set_diff(audio_segm)
+    time_quiet_train = nap.IntervalSet(0, off_time*0.8).set_diff(audio_segm)
     time_quiet_test = nap.IntervalSet(off_time * 0.8, off_time).set_diff(audio_segm)
-    first_half = nap.IntervalSet(0, off_time*0.4).set_diff(audio_segm)
-    second_half = nap.IntervalSet(off_time * 0.4, off_time * 0.8).set_diff(audio_segm)
+    #first_half = nap.IntervalSet(0, off_time*0.4).set_diff(audio_segm)
+    #second_half = nap.IntervalSet(off_time * 0.4, off_time * 0.8).set_diff(audio_segm)
 
     # set the number of iteration and batches
     n_batches = 500
-    n_epochs = 10
-    n_sec = first_half.tot_length()
+    n_epochs = 7
+    n_sec = time_quiet_train.tot_length()
     batch_size_sec = n_sec / n_batches
     num_iterations = n_batches * n_epochs
     bin_size = 0.0001
@@ -276,7 +276,7 @@ if __name__ == "__main__":
     for i, conn in enumerate(child_conns):
         p = mp.Process(
             target=worker_process,
-            args=(conn, i, spike_times, first_half, batch_size_sec, n_batches, shared_arrays[i], semaphore_dict[i]),
+            args=(conn, i, spike_times, time_quiet_train, batch_size_sec, n_batches, shared_arrays[i], semaphore_dict[i]),
             kwargs=dict(
                 bin_size=bin_size,
                 shutdown_flag=shutdown_flag,
@@ -303,7 +303,7 @@ if __name__ == "__main__":
         score_train = out["train_ll"]
         model_coef = out["params"][0]
         weights_sum = (model_coef.reshape(n_presn, n_fun, n_postsn)).sum(axis=1)
-        print("final params", score_train)
+        print("final params", np.array(score_train))
         print("fraction set to 0:", weights_sum[weights_sum==0].size / weights_sum.size)
     else:
         print("no shared model in the list...")
