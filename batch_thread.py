@@ -12,7 +12,7 @@ nap.nap_config.suppress_conversion_warnings = True
 class Server:
     def __init__(self, conns, semaphore_dict, shared_arrays, stop_event, num_iterations, shared_results, array_shape,
                  test_counts,
-                 reg_strength=0.001, n_basis_funcs=9, hist_window_sec=None, bin_size=None, n_ep=1): # nstart=0, nend=1):
+                 reg_strength=1e-05, step_size=0.001, n_basis_funcs=9, hist_window_sec=None, bin_size=None, n_ep=1): # nstart=0, nend=1):
         os.environ["JAX_PLATFORM_NAME"] = "gpu"
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
@@ -23,7 +23,7 @@ class Server:
 
         # set mp attributes
         self.array_shape = array_shape
-        self.model = self.configure_model(n_basis_funcs ,reg_strength)
+        self.model = self.configure_model(n_basis_funcs ,reg_strength, step_size)
         self.conns = conns
         self.semaphore_dict = semaphore_dict
         self.stop_event = stop_event
@@ -41,7 +41,7 @@ class Server:
         self.shared_arrays = shared_arrays
         print(f"ARRAY SHAPE {self.array_shape}")
 
-    def configure_model(self, n_basis_funcs, reg_strength):
+    def configure_model(self, n_basis_funcs, reg_strength, step_size):
         n_groups = self.array_shape[1]
         n_features = n_groups * n_basis_funcs
         mask = np.zeros((n_groups, n_features))
@@ -52,7 +52,7 @@ class Server:
             regularizer=self.nemos.regularizer.GroupLasso(
                 solver_name="ProximalGradient",
                 mask=mask,
-                solver_kwargs={"stepsize": 0.1, "acceleration": False},
+                solver_kwargs={"stepsize": step_size, "acceleration": False},
                 regularizer_strength=reg_strength
             )
         )
@@ -98,7 +98,7 @@ class Server:
                             train_ll.append(train_score)
                             print(f"train ll: {train_score}")
 
-                        if counter == self.num_iterations-1:
+                        if counter == self.num_iterations:
                             X = self.basis.compute_features(self.test_batch)
                             y = self.test_batch
                             test_score = self.model.score(X, y, score_type="log-likelihood")
@@ -227,8 +227,12 @@ if __name__ == "__main__":
     # get cv parameter
     parser = argparse.ArgumentParser()
     parser.add_argument("-r", "--RegStrength", help="Specify group lasso regularizer strength (float)")
+    parser.add_argument("-j", "--JobID", help="Provide Slurm job ID for saving results")
+    parser.add_argument("s", "--StepSize", help="Provide step size for grad descent")
     args = parser.parse_args()
     reg_strength = float(args.RegStrength)
+    step_size = float(args.StepSize)
+    job_id = args.JobID
 
     # load data
     audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
@@ -239,6 +243,11 @@ if __name__ == "__main__":
     audio_segm = nap.IntervalSet(start=audio_segm[:, 0], end=audio_segm[:, 1])
     ts_dict_quiet = {key: nap.Ts(spikes_quiet[key, 0].flatten()) for key in range(spikes_quiet.shape[0])}
     spike_times = nap.TsGroup(ts_dict_quiet)
+    spike_times["EI"] = ei_labels
+    inh = spike_times.getby_category("EI")[-1]
+    exc = spike_times.getby_category("EI")[1]
+    spike_times_sorted = nap.TsGroup.merge(exc, inh, reset_index=True)
+
     time_quiet_train = nap.IntervalSet(0, off_time*0.8).set_diff(audio_segm)
     time_quiet_test = nap.IntervalSet(off_time * 0.8, off_time).set_diff(audio_segm)
     #first_half = nap.IntervalSet(0, off_time*0.4).set_diff(audio_segm)
@@ -276,7 +285,7 @@ if __name__ == "__main__":
     for i, conn in enumerate(child_conns):
         p = mp.Process(
             target=worker_process,
-            args=(conn, i, spike_times, time_quiet_train, batch_size_sec, n_batches, shared_arrays[i], semaphore_dict[i]),
+            args=(conn, i, spike_times_sorted, time_quiet_train, batch_size_sec, n_batches, shared_arrays[i], semaphore_dict[i]),
             kwargs=dict(
                 bin_size=bin_size,
                 shutdown_flag=shutdown_flag,
@@ -292,7 +301,7 @@ if __name__ == "__main__":
         target=server_process,
         args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape,
               test_counts),
-        kwargs=dict(reg_strength=reg_strength, n_basis_funcs=n_fun, hist_window_sec=hist_window_sec, bin_size=bin_size,
+        kwargs=dict(reg_strength=reg_strength, step_size=step_size, n_basis_funcs=n_fun, hist_window_sec=hist_window_sec, bin_size=bin_size,
                     n_ep=n_epochs) #nstart=neuron_start, nend=neuron_end)
     )
     server.start()
@@ -303,6 +312,7 @@ if __name__ == "__main__":
         score_train = out["train_ll"]
         model_coef = out["params"][0]
         weights_sum = (model_coef.reshape(n_presn, n_fun, n_postsn)).sum(axis=1)
+        print(f"reg: {reg_strength}, step: {step_size}, iter: {num_iterations}")
         print("final params", np.array(score_train))
         print("fraction set to 0:", weights_sum[weights_sum==0].size / weights_sum.size)
     else:
@@ -313,7 +323,7 @@ if __name__ == "__main__":
     print("flag set")
 
     # Save results
-    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_{reg_strength}.npy", out.copy())
+    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_{job_id}.npy", out.copy())
 
     # Release all semaphores to unblock workers if they are waiting
     for _ in range(num_workers):
