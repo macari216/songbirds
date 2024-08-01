@@ -7,11 +7,14 @@ import numpy as np
 import scipy.io as sio
 import pynapple as nap
 
+import nemos
+from nemos import solvers
+
 nap.nap_config.suppress_conversion_warnings = True
 
 class Server:
     def __init__(self, conns, semaphore_dict, shared_arrays, stop_event, num_iterations, shared_results, array_shape,
-                 test_counts, batches, spike_times,
+                 test_counts,
                  reg_strength=1e-05, step_size=0.001, n_basis_funcs=9, hist_window_sec=None, bin_size=None, n_ep=1): # nstart=0, nend=1):
         os.environ["JAX_PLATFORM_NAME"] = "gpu"
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
@@ -41,9 +44,6 @@ class Server:
         self.shared_arrays = shared_arrays
         print(f"ARRAY SHAPE {self.array_shape}")
 
-        self.batches = batches
-        self.spikes = spike_times
-
     def configure_model(self, n_basis_funcs, reg_strength, step_size):
         n_groups = self.array_shape[1]
         n_features = n_groups * n_basis_funcs
@@ -51,12 +51,11 @@ class Server:
         for i in range(n_groups):
             mask[i, i * n_basis_funcs:i * n_basis_funcs + n_basis_funcs] = np.ones(n_basis_funcs)
 
-        model = self.nemos.glm.PopulationGLM(
+        model = self.nemos.glm.PopulationGLM(solver_name="ProxSVRG",
+            solver_kwargs={"step_size": step_size},
+            regularizer_strength=reg_strength,
             regularizer=self.nemos.regularizer.GroupLasso(
-                solver_name="ProximalGradient",
                 mask=mask,
-                solver_kwargs={"stepsize": step_size, "acceleration": False},
-                regularizer_strength=reg_strength
             )
         )
 
@@ -89,24 +88,19 @@ class Server:
 
                         # initialize at first iteration
                         if counter == 0:
-                            params, state = self.model.initialize_solver(X,y)
+                            params = self.model.initialize_params(X.d,y)
+                            state = self.model.initialize_state(X.d,y, params)
                         # update
                         t0 = perf_counter()
-                        params, state = self.model.update(params, state, X,y)
+                        params, state = self.model.update(params, state, X.d,y)
                         print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}, total time: {np.round(perf_counter() - tt0, 5)}")
                         counter += 1
 
-                        if counter%1==0:
+                        if counter%50==0:
                             t0 = perf_counter()
-                            train_score = np.zeros(500)
-                            for i, bat in enumerate(self.batches):
-                                x_count = self.spikes.count(self.bin_size, ep=bat)
-                                X = self.basis.compute_features(x_count)
-                                y = x_count
-
-                                train_score[i] = self.model.score(X, y, score_type="log-likelihood")
-                            train_ll.append(train_score.sum())
-                            print(f"train ll: {train_score.sum()}, time:{np.round(perf_counter() - t0, 5)}")
+                            train_score = self.model.score(X, y, score_type="log-likelihood")
+                            train_ll.append(train_score)
+                            print(f"train ll: {train_score}, time:{np.round(perf_counter() - t0, 5)}")
 
                         if counter == self.num_iterations:
                             X = self.basis.compute_features(self.test_batch)
@@ -265,7 +259,7 @@ if __name__ == "__main__":
 
     # set the number of iteration and batches
     n_batches = 500
-    n_epochs = 3
+    n_epochs = 10
     n_sec = time_quiet_train.tot_length()
     batch_size_sec = n_sec / n_batches
     num_iterations = n_batches * n_epochs
@@ -278,32 +272,6 @@ if __name__ == "__main__":
 
     # create a test batch
     test_counts = spike_times.count(bin_size, ep=time_quiet_test[54])
-
-    def compute_starts(n_bat, time_quiet, batch_size_sec):
-        iset_batches = []
-        cnt = 0
-        t0 = time_quiet.time_span().start
-        tn = time_quiet.time_span().end
-        while cnt < n_bat:
-            start = np.random.uniform(t0, tn)
-            end = start + batch_size_sec
-            tot_time = nap.IntervalSet(end, tn).intersect(time_quiet)
-            if tot_time.tot_length() < batch_size_sec:
-                continue
-            ep = nap.IntervalSet(start, end).intersect(time_quiet)
-            delta_t = batch_size_sec - ep.tot_length()
-
-            while delta_t > 0:
-                end += delta_t
-                ep = nap.IntervalSet(start, end).intersect(time_quiet)
-                delta_t = batch_size_sec - ep.tot_length()
-
-            iset_batches.append(ep)
-            cnt += 1
-
-        return iset_batches
-
-    batches = compute_starts(n_batches, time_quiet_train, batch_size_sec)
 
     # set up workers
     num_workers = 3
@@ -336,7 +304,7 @@ if __name__ == "__main__":
     server = mp.Process(
         target=server_process,
         args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape,
-              test_counts, batches, spike_times_sorted),
+              test_counts),
         kwargs=dict(reg_strength=reg_strength, step_size=step_size, n_basis_funcs=n_fun, hist_window_sec=hist_window_sec, bin_size=bin_size,
                     n_ep=n_epochs) #nstart=neuron_start, nend=neuron_end)
     )
