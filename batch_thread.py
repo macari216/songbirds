@@ -67,9 +67,9 @@ class Server:
             ei_mask[:101*9, j] = np.ones(101 * 9)
 
         model = self.nemos.glm.PopulationGLM(solver_name="ProxSVRG",
-            solver_kwargs={"step_size": step_size},
+            solver_kwargs={"stepsize": step_size},
             regularizer_strength=reg_strength,
-            feature_mask=ee_mask,
+            #feature_mask=ee_mask,
             regularizer=self.nemos.regularizer.GroupLasso(
                 mask=mask
             )
@@ -112,16 +112,18 @@ class Server:
                         if counter%500==0:
                             t0 = perf_counter()
                             loss_grad = self.jax.jit(self.jax.grad(self.model._solver_loss_fun_))
-                            batch_grad = np.zeros(500)
+                            batch_grad = []
                             for i in range(500):
                                 df_xs_bat = loss_grad(state.xs, X, y)
-                                batch_grad[i] = df_xs_bat
+                                print(df_xs_bat.shape)
+                                batch_grad.append(df_xs_bat)
                                 x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
                                 self.array_shape)
                                 self.semaphore_dict[worker_id].release()
                                 y = x_count
                                 X = self.basis.compute_features(x_count)
-                            state = state._replace(df_xs=batch_grad.mean())
+                            batch_grad_mean = sum(batch_grad)/500
+                            state = state._replace(df_xs=batch_grad_mean)
                             print(f"updated full gradient, time: {np.round(perf_counter() - t0, 5)}")
 
                         t0 = perf_counter()
