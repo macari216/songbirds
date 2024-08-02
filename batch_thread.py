@@ -7,9 +7,6 @@ import numpy as np
 import scipy.io as sio
 import pynapple as nap
 
-import nemos
-from nemos import solvers
-
 nap.nap_config.suppress_conversion_warnings = True
 
 class Server:
@@ -52,7 +49,8 @@ class Server:
             mask[i, i * n_basis_funcs:i * n_basis_funcs + n_basis_funcs] = np.ones(n_basis_funcs)
 
         model = self.nemos.glm.PopulationGLM(solver_name="ProxSVRG",
-            solver_kwargs={"step_size": step_size},
+            solver_args={"init_full_gradient":True},
+            solver_kwargs={"stepsize": step_size},
             regularizer_strength=reg_strength,
             regularizer=self.nemos.regularizer.GroupLasso(
                 mask=mask,
@@ -88,11 +86,11 @@ class Server:
 
                         # initialize at first iteration
                         if counter == 0:
-                            params = self.model.initialize_params(X.d,y)
-                            state = self.model.initialize_state(X.d,y, params)
+                            params = self.model.initialize_params(X,y)
+                            state = self.model.initialize_state(X,y, params)
                         # update
                         t0 = perf_counter()
-                        params, state = self.model.update(params, state, X.d,y)
+                        params, state = self.model.update(params, state, X,y)
                         print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}, total time: {np.round(perf_counter() - tt0, 5)}")
                         counter += 1
 
