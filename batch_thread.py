@@ -96,9 +96,9 @@ class Server:
 
                         #convolve x counts
                         #y = x_count[:, self.nstart:self.nend]
-                        y = x_count[:,:101]
+                        y = x_count
                         t0 = perf_counter()
-                        X = self.basis.compute_features(x_count[:,:101])
+                        X = self.basis.compute_features(x_count)
                         print(f"convolution performed, time: {np.round(perf_counter() - t0, 5)}")
 
                         # initialize at first iteration
@@ -112,9 +112,19 @@ class Server:
 
                         if counter%50==0:
                             t0 = perf_counter()
-                            train_score = self.model.score(X, y, score_type="log-likelihood")
-                            train_ll.append(train_score)
-                            print(f"train ll: {train_score}, time:{np.round(perf_counter() - t0, 5)}")
+                            train_ll_full = np.zeros(500)
+                            for i in range(500):
+                                train_score = self.model.score(X, y, score_type="log-likelihood")
+                                train_ll_full[i] = train_score
+
+                                x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
+                                self.array_shape)
+                                self.semaphore_dict[worker_id].release()
+                                y = x_count
+                                X = self.basis.compute_features(x_count)
+
+                            train_ll.append(train_ll_full.sum())
+                            print(f"train ll (full dataset): {train_ll_full.sum()}, time:{np.round(perf_counter() - t0, 5)}")
 
                         if counter == self.num_iterations:
                             X = self.basis.compute_features(self.test_batch)
