@@ -48,12 +48,29 @@ class Server:
         for i in range(n_groups):
             mask[i, i * n_basis_funcs:i * n_basis_funcs + n_basis_funcs] = np.ones(n_basis_funcs)
 
-        model = self.nemos.glm.PopulationGLM(solver_name="ProxSVRG",
-            solver_args={"init_full_gradient":True},
-            solver_kwargs={"stepsize": step_size},
-            regularizer_strength=reg_strength,
+        ee_mask = np.zeros((9 * 195, 195))
+        for j in range(101):
+            ee_mask[:101 * 9, j] = np.ones(101 * 9)
+
+        ii_mask = np.zeros((9 * 195, 195))
+        for j in range(101, 195):
+            ii_mask[101 * 9:, j] = np.ones(94 * 9)
+
+        ie_mask = np.zeros((9 * 195, 195))
+        for j in range(101):
+            ie_mask[101 * 9:, j] = np.ones(94 * 9)
+
+        ei_mask = np.zeros((9 * 195, 195))
+        for j in range(101, 195):
+            ei_mask[:101 * 9, j] = np.ones(101 * 9)
+
+        model = self.nemos.glm.PopulationGLM(
+            feature_mask=ee_mask,
             regularizer=self.nemos.regularizer.GroupLasso(
+                solver_name="ProximalGradient",
                 mask=mask,
+                solver_kwargs={"stepsize": step_size, "acceleration": False},
+                regularizer_strength=reg_strength
             )
         )
 
@@ -86,8 +103,7 @@ class Server:
 
                         # initialize at first iteration
                         if counter == 0:
-                            params = self.model.initialize_params(X,y)
-                            state = self.model.initialize_state(X,y, params)
+                            params, state = self.model.initialize_solver(X, y)
                         # update
                         t0 = perf_counter()
                         params, state = self.model.update(params, state, X,y)
@@ -256,8 +272,8 @@ if __name__ == "__main__":
     #second_half = nap.IntervalSet(off_time * 0.4, off_time * 0.8).set_diff(audio_segm)
 
     # set the number of iteration and batches
-    n_batches = 500
-    n_epochs = 10
+    n_batches = 300
+    n_epochs = 5
     n_sec = time_quiet_train.tot_length()
     batch_size_sec = n_sec / n_batches
     num_iterations = n_batches * n_epochs
