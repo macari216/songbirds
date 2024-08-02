@@ -20,6 +20,8 @@ class Server:
         import jax
         self.jax = jax
         self.nemos = nemos
+        self.tree_l2_norm = self.nemos.tree_utils.tree_l2_norm
+        self.tree_sub = self.nemos.tree_utils.tree_sub
 
         # set mp attributes
         self.array_shape = array_shape
@@ -50,27 +52,26 @@ class Server:
 
         ee_mask = np.zeros((9 * 195, 195))
         for j in range(101):
-            ee_mask[:101 * 9, j] = np.ones(101 * 9)
+            ee_mask[:101*9, j] = np.ones(101 * 9)
 
         ii_mask = np.zeros((9 * 195, 195))
-        for j in range(101, 195):
-            ii_mask[101 * 9:, j] = np.ones(94 * 9)
+        for j in range(102, 195):
+            ii_mask[-94*9:, j] = np.ones(94 * 9)
 
         ie_mask = np.zeros((9 * 195, 195))
         for j in range(101):
-            ie_mask[101 * 9:, j] = np.ones(94 * 9)
+            ie_mask[-94*9:, j] = np.ones(94 * 9)
 
         ei_mask = np.zeros((9 * 195, 195))
-        for j in range(101, 195):
-            ei_mask[:101 * 9, j] = np.ones(101 * 9)
+        for j in range(102, 195):
+            ei_mask[:101*9, j] = np.ones(101 * 9)
 
-        model = self.nemos.glm.PopulationGLM(
+        model = self.nemos.glm.PopulationGLM(solver_name="ProxSVRG",
+            solver_kwargs={"step_size": step_size},
+            regularizer_strength=reg_strength,
             feature_mask=ee_mask,
             regularizer=self.nemos.regularizer.GroupLasso(
-                solver_name="ProximalGradient",
-                mask=mask,
-                solver_kwargs={"stepsize": step_size, "acceleration": False},
-                regularizer_strength=reg_strength
+                mask=mask
             )
         )
 
@@ -103,8 +104,26 @@ class Server:
 
                         # initialize at first iteration
                         if counter == 0:
-                            params, state = self.model.initialize_solver(X, y)
+                            params = self.model.initialize_params(X,y)
+                            state = self.model.initialize_state(X, y, params)
                         # update
+
+                        # svrg update whole gradient
+                        if counter%500==0:
+                            t0 = perf_counter()
+                            loss_grad = self.jax.jit(self.jax.grad(self.model._solver_loss_fun_))
+                            batch_grad = np.zeros(500)
+                            for i in range(500):
+                                df_xs_bat = loss_grad(state.xs, X, y)
+                                batch_grad[i] = df_xs_bat
+                                x_count = np.frombuffer(self.shared_arrays[worker_id], dtype=np.float32).reshape(
+                                self.array_shape)
+                                self.semaphore_dict[worker_id].release()
+                                y = x_count
+                                X = self.basis.compute_features(x_count)
+                            state = state._replace(df_xs=batch_grad.mean())
+                            print(f"updated full gradient, time: {np.round(perf_counter() - t0, 5)}")
+
                         t0 = perf_counter()
                         params, state = self.model.update(params, state, X,y)
                         print(f"model step {counter}, time: {np.round(perf_counter() - t0, 5)}, total time: {np.round(perf_counter() - tt0, 5)}")
@@ -115,6 +134,13 @@ class Server:
                             train_score = self.model.score(X, y, score_type="log-likelihood")
                             train_ll.append(train_score)
                             print(f"train ll: {train_score}, time:{np.round(perf_counter() - t0, 5)}")
+
+                        state = state._replace(
+                            error=self.tree_l2_norm(self.tree_sub(params, state.xs)) / self.tree_l2_norm(state.xs)
+                        )
+                        state = state._replace(
+                            xs=params,
+                        )
 
                         if counter == self.num_iterations:
                             X = self.basis.compute_features(self.test_batch)
