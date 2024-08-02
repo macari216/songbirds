@@ -21,8 +21,9 @@ spike_times_quiet = nap.TsGroup(ts_dict_quiet)
 # add E/I labels
 spike_times_quiet["EI"] = ei_labels
 
-inh = spike_times_quiet.getby_category("EI")[-1]
-exc = spike_times_quiet.getby_category("EI")[1]
+spike_times_sorted = nap.TsGroup.merge_group(spike_times_quiet.getby_category("EI")[1],
+                                             spike_times_quiet.getby_category("EI")[-1],
+                                             reset_index=True)
 
 # spike count
 training_end = off_time * 0.7
@@ -35,8 +36,7 @@ binsize = 0.001   # in seconds
 # count_train = nap.TsdFrame(pd.concat([exc.count(binsize, ep=time_quiet_train).as_dataframe(),
 #                         inh.count(binsize, ep=time_quiet_train).as_dataframe()], axis=1))
 
-count_test = nap.TsdFrame(pd.concat([exc.count(binsize, ep=time_quiet_test).as_dataframe(),
-                        inh.count(binsize, ep=time_quiet_test).as_dataframe()], axis=1))
+count_test = spike_times_sorted.count(binsize, ep=time_quiet_test)
 
 n_neurons = count_test.shape[1]
 
@@ -61,8 +61,7 @@ def batcher(start):
     end = start + batch_size
     ep = nap.IntervalSet(start, end)
     start = end
-    counts = nap.TsdFrame(pd.concat([exc.count(binsize, ep=ep).as_dataframe(),
-                        inh.count(binsize, ep=ep).as_dataframe()], axis=1))
+    counts = spike_times_sorted.count(binsize, ep=ep)
     X = basis.compute_features(counts)
     return X, counts, start
 
