@@ -23,6 +23,7 @@ class Server:
 
         # set mp attributes
         self.array_shape = array_shape
+        self.block = str(block)
         self.model = self.configure_model(n_basis_funcs ,reg_strength, step_size)
         self.conns = conns
         self.semaphore_dict = semaphore_dict
@@ -30,7 +31,6 @@ class Server:
         self.n_epochs = n_ep
         self.num_iterations = num_iterations
         self.shared_results = shared_results
-        self.block = str(block)
         self.bin_size = bin_size
         self.hist_window_size = int(hist_window_sec / bin_size)
         self.basis = self.nemos.basis.RaisedCosineBasisLog(
