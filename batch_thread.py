@@ -48,17 +48,17 @@ class Server:
         for i in range(n_groups):
             mask[i, i * n_basis_funcs:i * n_basis_funcs + n_basis_funcs] = np.ones(n_basis_funcs)
 
-        ee_mask = np.zeros((9 * 195, 195))
-        for j in range(101):
-            ee_mask[:101 * 9, j] = np.ones(101 * 9)
-
-        ii_mask = np.zeros((9 * 195, 195))
-        for j in range(101, 195):
-            ii_mask[101 * 9:, j] = np.ones(94 * 9)
-
-        ie_mask = np.zeros((9 * 195, 195))
-        for j in range(101):
-            ie_mask[101 * 9:, j] = np.ones(94 * 9)
+        # ee_mask = np.zeros((9 * 195, 195))
+        # for j in range(101):
+        #     ee_mask[:101 * 9, j] = np.ones(101 * 9)
+        #
+        # ii_mask = np.zeros((9 * 195, 195))
+        # for j in range(101, 195):
+        #     ii_mask[101 * 9:, j] = np.ones(94 * 9)
+        #
+        # ie_mask = np.zeros((9 * 195, 195))
+        # for j in range(101):
+        #     ie_mask[101 * 9:, j] = np.ones(94 * 9)
 
         ei_mask = np.zeros((9 * 195, 195))
         for j in range(101, 195):
@@ -66,11 +66,9 @@ class Server:
 
         model = self.nemos.glm.PopulationGLM(
             #feature_mask=ee_mask,
-            regularizer=self.nemos.regularizer.GroupLasso(
-                solver_name="ProximalGradient",
-                mask=mask,
+            regularizer=self.nemos.regularizer.UnRegularized(
+                solver_name="GradientDescent",
                 solver_kwargs={"stepsize": step_size, "acceleration": False},
-                regularizer_strength=reg_strength
             )
         )
 
