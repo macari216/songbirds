@@ -43,7 +43,10 @@ class Server:
         print(f"ARRAY SHAPE {self.array_shape}")
 
     def configure_model(self, n_basis_funcs, reg_strength, step_size):
-        n_groups = self.array_shape[1]
+        if self.block=="ee" or self.block=="ei":
+            n_groups = 101
+        elif self.block == "ii" or self.block == "ie":
+            n_groups = 94
         n_features = n_groups * n_basis_funcs
         mask = np.zeros((n_groups, n_features))
         for i in range(n_groups):
