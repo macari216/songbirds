@@ -11,7 +11,7 @@ nap.nap_config.suppress_conversion_warnings = True
 
 class Server:
     def __init__(self, conns, semaphore_dict, shared_arrays, stop_event, num_iterations, shared_results, array_shape,
-                 test_counts,
+                 test_counts, block,
                  reg_strength=1e-05, step_size=0.001, n_basis_funcs=9, hist_window_sec=None, bin_size=None, n_ep=1): # nstart=0, nend=1):
         os.environ["JAX_PLATFORM_NAME"] = "gpu"
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
@@ -30,6 +30,7 @@ class Server:
         self.n_epochs = n_ep
         self.num_iterations = num_iterations
         self.shared_results = shared_results
+        self.block = str(block)
         self.bin_size = bin_size
         self.hist_window_size = int(hist_window_sec / bin_size)
         self.basis = self.nemos.basis.RaisedCosineBasisLog(
@@ -48,21 +49,21 @@ class Server:
         for i in range(n_groups):
             mask[i, i * n_basis_funcs:i * n_basis_funcs + n_basis_funcs] = np.ones(n_basis_funcs)
 
-        ee_mask = np.zeros((9 * 195, 195))
-        for j in range(101):
-            ee_mask[:101 * 9, j] = np.ones(101 * 9)
-
-        ii_mask = np.zeros((9 * 195, 195))
-        for j in range(101, 195):
-            ii_mask[101 * 9:, j] = np.ones(94 * 9)
-
-        ie_mask = np.zeros((9 * 195, 195))
-        for j in range(101):
-            ie_mask[101 * 9:, j] = np.ones(94 * 9)
-
-        ei_mask = np.zeros((9 * 195, 195))
-        for j in range(101, 195):
-            ei_mask[:101 * 9, j] = np.ones(101 * 9)
+        # ee_mask = np.zeros((9 * 195, 195))
+        # for j in range(101):
+        #     ee_mask[:101 * 9, j] = np.ones(101 * 9)
+        #
+        # ii_mask = np.zeros((9 * 195, 195))
+        # for j in range(101, 195):
+        #     ii_mask[101 * 9:, j] = np.ones(94 * 9)
+        #
+        # ie_mask = np.zeros((9 * 195, 195))
+        # for j in range(101):
+        #     ie_mask[101 * 9:, j] = np.ones(94 * 9)
+        #
+        # ei_mask = np.zeros((9 * 195, 195))
+        # for j in range(101, 195):
+        #     ei_mask[:101 * 9, j] = np.ones(101 * 9)
 
         model = self.nemos.glm.PopulationGLM(
             #feature_mask=ee_mask,
@@ -75,6 +76,26 @@ class Server:
         )
 
         return model
+
+    def select_block(self, x_c):
+        if self.block == "ee":
+            y = x_c[:,:101]
+            x = x_c[:,:101*9]
+            return x, y
+        elif self.block == "ei":
+            y = x_c[:,-94:]
+            x = x_c[:,:101*9]
+            return x, y
+
+        elif self.block == "ii":
+            y = x_c[:,-94:]
+            x = x_c[:,-94*9:]
+            return x, y
+
+        elif self.block == "ie":
+            y = x_c[:,:101]
+            x = x_c[:,-94*9:]
+            return x, y
 
     def run(self):
         params, state = None, None
@@ -96,9 +117,9 @@ class Server:
 
                         #convolve x counts
                         #y = x_count[:, self.nstart:self.nend]
-                        y = x_count[:,:101]
+                        x, y = self.select_block(x_count)
                         t0 = perf_counter()
-                        X = self.basis.compute_features(x_count[:,:101])
+                        X = self.basis.compute_features(x)
                         print(f"convolution performed, time: {np.round(perf_counter() - t0, 5)}")
 
                         # initialize at first iteration
@@ -247,10 +268,12 @@ if __name__ == "__main__":
     parser.add_argument("-r", "--RegStrength", help="Specify group lasso regularizer strength (float)")
     parser.add_argument("-j", "--JobID", help="Provide Slurm job ID for saving results")
     parser.add_argument("-s", "--StepSize", help="Provide step size for grad descent")
+    parser.add_argument("-b", "--Block", help="Select a bloc to fit: ee, ii, ei or ie")
     args = parser.parse_args()
     reg_strength = float(args.RegStrength)
     step_size = float(args.StepSize)
     job_id = args.JobID
+    block = args.Block
 
     # load data
     audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
@@ -318,7 +341,7 @@ if __name__ == "__main__":
     server = mp.Process(
         target=server_process,
         args=(parent_conns, semaphore_dict, shared_arrays, shutdown_flag, num_iterations, shared_results, array_shape,
-              test_counts),
+              test_counts, block),
         kwargs=dict(reg_strength=reg_strength, step_size=step_size, n_basis_funcs=n_fun, hist_window_sec=hist_window_sec, bin_size=bin_size,
                     n_ep=n_epochs) #nstart=neuron_start, nend=neuron_end)
     )
@@ -341,7 +364,7 @@ if __name__ == "__main__":
     print("flag set")
 
     # Save results
-    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_{job_id}.npy", out.copy())
+    np.save(f"/mnt/home/amedvedeva/ceph/songbird_output/mp_results_{job_id}_{block}.npy", out.copy())
 
     # Release all semaphores to unblock workers if they are waiting
     for _ in range(num_workers):
