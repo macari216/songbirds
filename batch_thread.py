@@ -23,7 +23,7 @@ class Server:
 
         # set mp attributes
         self.array_shape = array_shape
-        self.block = str(block)
+        self.block = block
         self.model = self.configure_model(n_basis_funcs ,reg_strength, step_size)
         self.conns = conns
         self.semaphore_dict = semaphore_dict
@@ -141,8 +141,8 @@ class Server:
                             print(f"train ll: {train_score}, time:{np.round(perf_counter() - t0, 5)}")
 
                         if counter == self.num_iterations:
-                            X = self.basis.compute_features(self.test_batch)
-                            y = self.test_batch
+                            x, y = self.select_block(self.test_batch)
+                            X = self.basis.compute_features(x)
                             test_score = self.model.score(X, y, score_type="log-likelihood")
                             train_ll.append(test_score)
                             print(f"test ll: {test_score}")
@@ -276,7 +276,7 @@ if __name__ == "__main__":
     reg_strength = float(args.RegStrength)
     step_size = float(args.StepSize)
     job_id = args.JobID
-    block = args.Block
+    block = str(args.Block)
 
     # load data
     audio_segm = sio.loadmat('/mnt/home/amedvedeva/ceph/songbird_data/c57AudioSegments.mat')['c57AudioSegments']
@@ -306,8 +306,19 @@ if __name__ == "__main__":
     bin_size = 0.0001
     hist_window_sec = 0.004
     n_fun = 9
-    n_presn = len(ts_dict_quiet)
-    n_postsn = n_presn
+
+    if block=="ee":
+        n_presn = 101
+        n_postsn = 101
+    elif block=="ei":
+        n_presn = 101
+        n_postsn = 94
+    elif block=="ie":
+        n_presn = 94
+        n_postsn = 101
+    elif block=="ii":
+        n_presn = 94
+        n_postsn = 94
     #n_postsn = len(np.arange(neuron_start, neuron_end))
 
     # create a test batch
