@@ -83,21 +83,21 @@ class Server:
     def select_block(self, x_c):
         if self.block == "ee":
             y = x_c[:,:101]
-            x = x_c[:,:101*9]
+            x = x_c[:,:101]
             return x, y
         elif self.block == "ei":
             y = x_c[:,-94:]
-            x = x_c[:,:101*9]
+            x = x_c[:,:101]
             return x, y
 
         elif self.block == "ii":
             y = x_c[:,-94:]
-            x = x_c[:,-94*9:]
+            x = x_c[:,-94:]
             return x, y
 
         elif self.block == "ie":
             y = x_c[:,:101]
-            x = x_c[:,-94*9:]
+            x = x_c[:,-94:]
             return x, y
 
     def run(self):
